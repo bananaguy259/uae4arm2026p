@@ -16,8 +16,6 @@
 
 #include "floppybridge_lib.h"
 #include <string>
-#include <codecvt>
-#include <locale>
 #include <algorithm>
 #include <cstring>
 #ifndef _WIN32
@@ -36,14 +34,14 @@ HMODULE WIN32_LoadLibrary(const TCHAR*);
 #define GETFUNC dlsym
 #endif
 
+#if defined(_WIN32) && defined(WINUAE)
 #ifdef _WIN64
 #define MODULENAME _T("FloppyBridge_x64.dll")
 #else
-#ifdef _WIN32
 #define MODULENAME _T("FloppyBridge.dll")
-#else
-#define MODULENAME "libfloppybridge"
 #endif
+#else
+#define MODULENAME _T("libfloppybridge")
 #endif
 
 #ifdef _WIN32
@@ -208,22 +206,18 @@ _DRIVER_setDirectMode DRIVER_setDirectMode = nullptr;
 _DRIVER_isStillWorking DRIVER_isStillWorking = nullptr;
 
 // This is normally declared in uae/dlopen.h, but if we include that here, it breaks the build
+#ifdef _WIN32
+extern HINSTANCE uae_dlopen_plugin(const TCHAR* name);
+#else
 extern void* uae_dlopen_plugin(const TCHAR* name);
+#endif
 
 // Sets up the bridge.  We assume it will persist while the application is open.
 void prepareBridge() {
 	if (hBridgeDLLHandle) return;
 
-#ifdef WIN32
-#ifdef WINUAE
+#if defined(WIN32) && defined(WINUAE)
 	hBridgeDLLHandle = WIN32_LoadLibrary(MODULENAME);
-#else
-#ifdef _UNICODE
-	hBridgeDLLHandle = LoadLibraryW(MODULENAME);
-#else
-	hBridgeDLLHandle = LoadLibraryA(MODULENAME);
-#endif
-#endif
 #else
 	hBridgeDLLHandle = uae_dlopen_plugin(MODULENAME);
 #endif
@@ -318,15 +312,22 @@ void prepareBridge() {
 	}
 }
 
-// character conversions
-using convert_t = std::codecvt_utf8<wchar_t>;
-static std::wstring_convert<convert_t, wchar_t> strconverter;
-
+// Simple wstring to string conversion (ASCII-safe)
 void _quickw2a(const std::wstring& wstr, std::string& str) {
-	str = strconverter.to_bytes(wstr);
+	str.clear();
+	str.reserve(wstr.size());
+	for (wchar_t wc : wstr) {
+		str.push_back(static_cast<char>(wc & 0xFF));
+	}
 }
+
+// Simple string to wstring conversion
 void _quicka2w(const std::string& str, std::wstring& wstr) {
-	wstr = strconverter.from_bytes(str);
+	wstr.clear();
+	wstr.reserve(str.size());
+	for (char c : str) {
+		wstr.push_back(static_cast<wchar_t>(static_cast<unsigned char>(c)));
+	}
 }
 
 // Copy or convert a char* to a TCHAR

@@ -1,0 +1,272 @@
+package com.uae4arm2026.data
+
+import com.uae4arm2026.data.model.AmigaModel
+import com.uae4arm2026.data.model.EmulatorSettings
+import org.junit.Assert.*
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+
+class ConfigGeneratorTest {
+
+	@get:Rule
+	val tempDir = TemporaryFolder()
+
+	// --- Basic generation ---
+
+	@Test
+	fun `generate produces valid config header`() {
+		val output = ConfigGenerator.generate(EmulatorSettings())
+		assertTrue(output.startsWith(UpstreamConfig.GENERATED_BY_HEADER))
+	}
+
+	@Test
+	fun `generate includes CPU settings`() {
+		val output = ConfigGenerator.generate(EmulatorSettings(cpuModel = 68020))
+		assertContains(output, "cpu_model=68020")
+	}
+
+	@Test
+	fun `generate includes boolean as true or false strings`() {
+		val output = ConfigGenerator.generate(EmulatorSettings(cpuCompatible = true, immediateBlits = false))
+		assertContains(output, "cpu_compatible=true")
+		assertContains(output, "immediate_blits=false")
+	}
+
+	// --- Conditional output ---
+
+	@Test
+	fun `generate omits FPU when fpuModel is 0`() {
+		val output = ConfigGenerator.generate(EmulatorSettings(fpuModel = 0))
+		assertNotContains(output, "fpu_model=")
+	}
+
+	@Test
+	fun `generate includes FPU when fpuModel is nonzero`() {
+		val output = ConfigGenerator.generate(EmulatorSettings(fpuModel = 68882))
+		assertContains(output, "fpu_model=68882")
+	}
+
+	@Test
+	fun `generate omits JIT when cachesize is 0`() {
+		val output = ConfigGenerator.generate(EmulatorSettings(jitCacheSize = 0))
+		assertNotContains(output, "cachesize=")
+		assertNotContains(output, "compfpu=")
+	}
+
+	@Test
+	fun `generate includes JIT when cachesize is nonzero`() {
+		val output = ConfigGenerator.generate(EmulatorSettings(jitCacheSize = 8192, jitFpu = true))
+		assertContains(output, "cachesize=8192")
+		assertContains(output, "compfpu=true")
+	}
+
+	@Test
+	fun `generate omits z3mem when 0`() {
+		val output = ConfigGenerator.generate(EmulatorSettings(z3Ram = 0))
+		assertNotContains(output, "z3mem_size=")
+	}
+
+	@Test
+	fun `generate includes z3mem when nonzero`() {
+		val output = ConfigGenerator.generate(EmulatorSettings(z3Ram = 64))
+		assertContains(output, "z3mem_size=64")
+	}
+
+	@Test
+	fun `generate omits ROM when empty`() {
+		val output = ConfigGenerator.generate(EmulatorSettings(romFile = "", romExtFile = ""))
+		assertNotContains(output, "kickstart_rom_file=")
+		assertNotContains(output, "kickstart_ext_rom_file=")
+	}
+
+	@Test
+	fun `generate includes ROM when nonempty`() {
+		val output = ConfigGenerator.generate(EmulatorSettings(romFile = "/path/kick.rom"))
+		assertContains(output, "kickstart_rom_file=/path/kick.rom")
+	}
+
+	@Test
+	fun `generate omits cdimage when empty`() {
+		val output = ConfigGenerator.generate(EmulatorSettings(cdImage = ""))
+		assertNotContains(output, "cdimage0=")
+	}
+
+	@Test
+	fun `generate includes cdimage when nonempty`() {
+		val output = ConfigGenerator.generate(EmulatorSettings(cdImage = "/path/game.iso"))
+		assertContains(output, "cdimage0=/path/game.iso")
+	}
+
+	// --- Joystick port 1 special handling ---
+
+	@Test
+	fun `generate maps onscreen_joy to native joyport1 with android marker`() {
+		val output = ConfigGenerator.generate(EmulatorSettings(joyport1 = "onscreen_joy"))
+		assertContains(output, "amiberry.touch_settings_version=1")
+		assertContains(output, "joyport1=joy1")
+		assertContains(output, "amiberry.android_joyport1=onscreen_joy")
+		assertContains(output, "onscreen_joystick=true")
+		assertContains(output, "amiberry.onscreen_joystick=true")
+		assertContains(output, "vkbd_enabled=false")
+		assertContains(output, "input.default_osk=false")
+		assertContains(output, "amiberry.show_android_keyboard_button=true")
+	}
+
+	@Test
+	fun `generate includes joyport1 when not onscreen_joy`() {
+		val output = ConfigGenerator.generate(EmulatorSettings(joyport1 = "joy0", onScreenJoystick = false))
+		assertContains(output, "joyport1=joy0")
+		assertContains(output, "amiberry.android_joyport1=joy0")
+		assertContains(output, "onscreen_joystick=false")
+		assertContains(output, "amiberry.onscreen_joystick=false")
+		assertContains(output, "amiberry.show_android_keyboard_button=true")
+	}
+
+	// --- Always-present keys ---
+
+	@Test
+	fun `generate always includes use_gui no`() {
+		val output = ConfigGenerator.generate(EmulatorSettings())
+		assertContains(output, "use_gui=no")
+	}
+
+	@Test
+	fun `generate always includes floppy drives`() {
+		val output = ConfigGenerator.generate(EmulatorSettings())
+		assertContains(output, "floppy0=")
+		assertContains(output, "floppy0type=")
+		assertContains(output, "floppy1=")
+		assertContains(output, "floppy1type=")
+		assertContains(output, "floppy2=")
+		assertContains(output, "floppy2type=")
+		assertContains(output, "floppy3=")
+		assertContains(output, "floppy3type=")
+	}
+
+	@Test
+	fun `generate always includes sound settings`() {
+		val output = ConfigGenerator.generate(EmulatorSettings())
+		assertContains(output, "sound_output=")
+		assertContains(output, "sound_frequency=")
+		assertContains(output, "sound_channels=")
+	}
+
+	@Test
+	fun `generate always includes display settings`() {
+		val output = ConfigGenerator.generate(EmulatorSettings())
+		assertContains(output, "gfx_width=")
+		assertContains(output, "gfx_height=")
+		assertContains(output, "gfx_correct_aspect=")
+		assertContains(output, "gfx_auto_crop=")
+	}
+
+	// --- Full A4000 config ---
+
+	@Test
+	fun `generate A4000 settings include all expected keys`() {
+		val settings = EmulatorSettings.fromModel(AmigaModel.A4000)
+		val output = ConfigGenerator.generate(settings)
+
+		assertContains(output, "cpu_model=68040")
+		assertContains(output, "chipset=aga")
+		assertContains(output, "fpu_model=68040")
+		assertContains(output, "cachesize=16384")
+		assertContains(output, "compfpu=true")
+		assertContains(output, "chipmem_size=4")
+		assertContains(output, "fastmem_size=8")
+	}
+
+	// --- Round-trip with ConfigParser ---
+
+	@Test
+	fun `round-trip parse of generated config preserves settings`() {
+		val original = EmulatorSettings(
+			baseModel = AmigaModel.A1200,
+			cpuModel = 68020,
+			cpuCompatible = false,
+			address24Bit = true,
+			cpuSpeed = "real",
+			fpuModel = 68882,
+			chipset = "aga",
+			immediateBlits = true,
+			collisionLevel = "full",
+			cycleExact = true,
+			ntsc = false,
+			chipRam = 4,
+			slowRam = 0,
+			fastRam = 4,
+			romFile = "/roms/kick31.rom",
+			floppy0 = "/disks/game.adf",
+			floppy0Type = 0,
+			soundOutput = "exact",
+			soundFreq = 44100,
+			soundChannels = "stereo",
+			gfxWidth = 720,
+			gfxHeight = 568,
+			correctAspect = true,
+			autoCrop = false,
+			joyport0 = "mouse",
+			joyport1 = "joy0",
+			onScreenJoystick = false,
+			onScreenKeyboard = true
+		)
+
+		val configText = ConfigGenerator.generate(original)
+		val file = tempDir.newFile("roundtrip.uae")
+		file.writeText(configText)
+		val parsed = ConfigParser.parse(file)
+		val result = parsed.settings
+
+		assertEquals(original.cpuModel, result.cpuModel)
+		assertEquals(original.cpuCompatible, result.cpuCompatible)
+		assertEquals(original.address24Bit, result.address24Bit)
+		assertEquals(original.cpuSpeed, result.cpuSpeed)
+		assertEquals(original.fpuModel, result.fpuModel)
+		assertEquals(original.chipset, result.chipset)
+		assertEquals(original.immediateBlits, result.immediateBlits)
+		assertEquals(original.collisionLevel, result.collisionLevel)
+		assertEquals(original.cycleExact, result.cycleExact)
+		assertEquals(original.ntsc, result.ntsc)
+		assertEquals(original.chipRam, result.chipRam)
+		assertEquals(original.slowRam, result.slowRam)
+		assertEquals(original.fastRam, result.fastRam)
+		assertEquals(original.romFile, result.romFile)
+		assertEquals(original.floppy0, result.floppy0)
+		assertEquals(original.floppy0Type, result.floppy0Type)
+		assertEquals(original.soundOutput, result.soundOutput)
+		assertEquals(original.soundFreq, result.soundFreq)
+		assertEquals(original.soundChannels, result.soundChannels)
+		assertEquals(original.gfxWidth, result.gfxWidth)
+		assertEquals(original.gfxHeight, result.gfxHeight)
+		assertEquals(original.correctAspect, result.correctAspect)
+		assertEquals(original.autoCrop, result.autoCrop)
+		assertEquals(original.joyport0, result.joyport0)
+		assertEquals(original.joyport1, result.joyport1)
+		assertEquals(original.onScreenJoystick, result.onScreenJoystick)
+		assertEquals(original.onScreenKeyboard, result.onScreenKeyboard)
+	}
+
+	@Test
+	fun `round-trip preserves onscreen_joy joyport1`() {
+		val original = EmulatorSettings(joyport1 = "onscreen_joy", onScreenJoystick = true)
+		val configText = ConfigGenerator.generate(original)
+		val file = tempDir.newFile("roundtrip_joy.uae")
+		file.writeText(configText)
+		val parsed = ConfigParser.parse(file)
+
+		assertEquals("onscreen_joy", parsed.settings.joyport1)
+		assertTrue(parsed.settings.onScreenJoystick)
+	}
+
+	// --- Helpers ---
+
+	private fun assertContains(text: String, substring: String) {
+		assertTrue("Expected to find '$substring' in output", text.contains(substring))
+	}
+
+	private fun assertNotContains(text: String, substring: String) {
+		assertFalse("Expected NOT to find '$substring' in output", text.contains(substring))
+	}
+}
+

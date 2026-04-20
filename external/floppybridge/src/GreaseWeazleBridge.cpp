@@ -94,21 +94,21 @@ bool GreaseWeazleDiskBridge::openInterface(std::string& errorMessage) {
 
 			if (m_io.currentBusType() == GreaseWeazle::BusType::Shugart) {
 				if (SUCCEEDED(RegCreateKeyExA(HKEY_CURRENT_USER, "Software\\RobSmithDev\\GreaseWeazleSupport", 0, NULL, 0, KEY_READ | KEY_WRITE | KEY_SET_VALUE | KEY_CREATE_SUB_KEY, NULL, &key, NULL)))
-					if (!RegQueryValueEx(key, L"WarningShownShugart", NULL, NULL, (LPBYTE)&hasBeenSeen, &dataSize)) dataSize = 0;
+					if (!RegQueryValueExA(key, "WarningShownShugart", NULL, NULL, (LPBYTE)&hasBeenSeen, &dataSize)) dataSize = 0;
 
 				if (!hasBeenSeen) {
 					hasBeenSeen = 1;
-					if (key) RegSetValueEx(key, L"WarningShownShugart", NULL, REG_DWORD, (LPBYTE)&hasBeenSeen, sizeof(hasBeenSeen));
+					if (key) RegSetValueExA(key, "WarningShownShugart", NULL, REG_DWORD, (LPBYTE)&hasBeenSeen, sizeof(hasBeenSeen));
 					errorMessage = "Greaseweazle boards cannot read the DiskChange pin from this type of drive and so will be simulated.\nThis is not optimal and will result in a higher amount of disk access.\nI highly recommend using an IBM/PC drive instead.";
 				}
 			}
 			else {
 				if (SUCCEEDED(RegCreateKeyExA(HKEY_CURRENT_USER, "Software\\RobSmithDev\\GreaseWeazleSupport", 0, NULL, 0, KEY_READ | KEY_WRITE | KEY_SET_VALUE | KEY_CREATE_SUB_KEY, NULL, &key, NULL)))
-					if (!RegQueryValueEx(key, L"WarningShown", NULL, NULL, (LPBYTE)&hasBeenSeen, &dataSize)) dataSize = 0;
+					if (!RegQueryValueExA(key, "WarningShown", NULL, NULL, (LPBYTE)&hasBeenSeen, &dataSize)) dataSize = 0;
 
 				if (!hasBeenSeen) {
 					hasBeenSeen = 1;
-					if (key) RegSetValueEx(key, L"WarningShown", NULL, REG_DWORD, (LPBYTE)&hasBeenSeen, sizeof(hasBeenSeen));
+					if (key) RegSetValueExA(key, "WarningShown", NULL, REG_DWORD, (LPBYTE)&hasBeenSeen, sizeof(hasBeenSeen));
 					errorMessage = "The Greaseweazle board you are using does not support access to the DISK CHANGE pin and so will be simulated.\nThis is not optimal and will result in a higher amount of disk access.\nIf you are sure that it does, please update its firmware.";
 				}
 			}
@@ -194,18 +194,20 @@ bool GreaseWeazleDiskBridge::getDiskChangeStatus(const bool forceCheck) {
 	// We actually trigger a SEEK operation to ensure this is right
 	if (forceCheck) {
 		switch (m_io.checkForDisk(forceCheck)) {
-		case GWResponse::drNoDiskInDrive:
-			if ((m_currentCylinder == 0) && (m_io.supportsDiskChange())) {
-				m_io.performNoClickSeek();
-			}
-			else {
-				m_io.selectTrack((m_currentCylinder > 40) ? m_currentCylinder - 1 : m_currentCylinder + 1, TrackSearchSpeed::tssNormal, true);
-				m_io.selectTrack(m_currentCylinder, TrackSearchSpeed::tssNormal, true);
-			}
-			break;
-		case GWResponse::drError:
-			m_wasIOError = true;
-			return false;
+			case GWResponse::drNoDiskInDrive:
+				if ((m_currentCylinder == 0) && (m_io.supportsDiskChange())) {
+					m_io.performNoClickSeek();
+				}
+				else {
+					m_io.selectTrack((m_currentCylinder > 40) ? m_currentCylinder - 1 : m_currentCylinder + 1, TrackSearchSpeed::tssNormal, true);
+					m_io.selectTrack(m_currentCylinder, TrackSearchSpeed::tssNormal, true);
+				}
+				break;
+			case GWResponse::drError:
+				m_wasIOError = true;
+				return false;
+			default:
+				break;
 		}
 	}
 
@@ -233,7 +235,8 @@ bool GreaseWeazleDiskBridge::performNoClickSeek() {
 		case GWResponse::drError:
 			m_wasIOError = true;
 			return false;
-
+		default:
+			break;
 	}
 	return false;
 }

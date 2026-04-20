@@ -1,0 +1,298 @@
+package com.uae4arm2026.data
+
+import android.content.Context
+import android.os.Environment
+import com.uae4arm2026.data.model.FileCategory
+import java.io.File
+
+/**
+ * Detects an AGS_UAE installation on the device and generates a ready-to-run
+ * .uae config for it — zero user setup required.
+ *
+ * Detection looks for an `AGS_UAE/` folder containing the minimum set of HDF
+ * files under several common storage locations.
+ */
+object AgsDetector {
+
+    private const val BOOTPRI_NOAUTOBOOT = -128
+    private const val AGS_SHARED_DEVICE = "DH10"
+    const val AGS_WIDESCREEN_RTG_WIDTH = 1920
+    const val AGS_WIDESCREEN_RTG_HEIGHT = 1080
+
+	private fun normalizeAgsRtgResolution(width: Int, height: Int): Pair<Int, Int> {
+		return when {
+			width <= 0 || height <= 0 -> AGS_WIDESCREEN_RTG_WIDTH to AGS_WIDESCREEN_RTG_HEIGHT
+			else -> width to height
+		}
+	}
+
+    /** Minimum HDF files required to consider a folder a valid AGS install. */
+    private val REQUIRED_HDFS = listOf("Workbench.hdf", "AGS_Drive.hdf", "Games.hdf")
+
+    /** Full ordered list of HDF mounts (device label → filename). Only files
+     *  present on disk are included in the generated config.
+     *
+     *  This matches the known-good AGS layout used by the original AGS_UAE
+     *  configs so guest-side startup expects the same drive mapping. */
+    private val ALL_HDF_MOUNTS = listOf(
+        "DH0" to "Workbench.hdf",
+        "DH1" to "Work.hdf",
+        "DH2" to "Music.hdf",
+        "DH3" to "Media.hdf",
+        "DH4" to "AGS_Drive.hdf",
+        "DH5" to "Games.hdf",
+        "DH6" to "Premium.hdf",
+        "DH7" to "Emulators2.hdf",
+        "DH8" to "WHD_Demos.hdf",
+        "DH9" to "WHD_Games.hdf",
+    )
+
+    data class AgsInstall(
+        /** The `AGS_UAE/` directory. */
+        val agsDir: File,
+        /** Absolute path to the A1200 3.1 ROM, or null if not found. */
+        val romFile: String?,
+    )
+
+    // ── Detection ────────────────────────────────────────────────────────────
+
+    /**
+     * Scan common storage roots for an AGS_UAE folder.
+     * Returns the first valid install found, or null.
+     *
+     * Should be called from a background coroutine — involves file I/O.
+     */
+    fun detect(context: Context): AgsInstall? {
+        val roots = buildList {
+            // Primary: /storage/emulated/0/
+            add(Environment.getExternalStorageDirectory())
+            // Common WinUAE-style subfolder
+            add(File(Environment.getExternalStorageDirectory(), "WinUAE"))
+            // Any configured library folder's parent (user may preserve folder structure)
+            FileCategory.entries.forEach { cat ->
+                FileManager.getCategoryLibraryPath(context, cat)?.let { path ->
+                    File(path).parentFile?.let { add(it) }
+                }
+            }
+        }.filterNotNull().distinctBy { it.canonicalPath }
+
+        for (root in roots) {
+            val candidate = File(root, "AGS_UAE")
+            if (isValidAgsDir(candidate)) {
+                return AgsInstall(
+                    agsDir  = candidate,
+                    romFile = findRom(candidate),
+                )
+            }
+        }
+        return null
+    }
+
+    /**
+     * Resolve an AGS install from a user-selected directory.
+     * Accepts either the AGS_UAE directory itself or a parent directory that contains it.
+     */
+    fun detectFromPath(path: String): AgsInstall? {
+        val selected = File(path)
+        val candidates = buildList {
+            add(selected)
+            add(File(selected, "AGS_UAE"))
+        }.distinctBy {
+            try {
+                it.canonicalPath
+            } catch (_: Exception) {
+                it.absolutePath
+            }
+        }
+
+        val agsDir = candidates.firstOrNull { isValidAgsDir(it) } ?: return null
+        return AgsInstall(
+            agsDir = agsDir,
+            romFile = findRom(agsDir),
+        )
+    }
+
+    /**
+     * Reconstruct an AGS install from already-mounted HDF paths persisted in settings.
+     * This is used after app reload so AGS launches continue to use the dedicated AGS config
+     * without forcing the user to remount.
+     */
+    fun detectFromMountedDrives(paths: List<String>): AgsInstall? {
+        val nonEmpty = paths.filter { it.isNotBlank() }
+        if (nonEmpty.isEmpty()) return null
+
+        val files = nonEmpty.map { File(it) }
+        val parent = files.firstOrNull()?.parentFile ?: return null
+        if (files.any { it.parentFile?.absolutePath != parent.absolutePath }) return null
+
+        val requiredPresent = REQUIRED_HDFS.all { name -> File(parent, name).isFile }
+        if (!requiredPresent) return null
+
+        return AgsInstall(
+            agsDir = parent,
+            romFile = findRom(parent),
+        )
+    }
+
+    private fun isValidAgsDir(dir: File): Boolean =
+        dir.isDirectory && REQUIRED_HDFS.all { File(dir, it).isFile }
+
+    private fun findRom(agsDir: File): String? {
+        val parent = agsDir.parentFile ?: return null
+        val candidates = listOf(
+            File(parent, "roms/AmigaForever/amiga-os-310-a1200.rom"),
+            File(parent, "roms/amiga-os-310-a1200.rom"),
+            File(parent, "Kickstarts/amiga-os-310-a1200.rom"),
+        )
+        return candidates.firstOrNull { it.isFile }?.absolutePath
+    }
+
+    /**
+     * Return the ordered list of AGS HDFs present on disk so the Android HDF UI
+     * can mount them directly into DH0.. slots.
+     */
+    fun mountableHardDrives(install: AgsInstall): List<String> {
+        val agsPath = install.agsDir.absolutePath
+        return ALL_HDF_MOUNTS.mapNotNull { (_, filename) ->
+            val file = File(agsPath, filename)
+            file.absolutePath.takeIf { file.isFile }
+        }
+    }
+
+    // ── Config generation ────────────────────────────────────────────────────
+
+    /**
+     * Generate a .uae config string for the given AGS install.
+     * Only mounts HDF files that are actually present on disk.
+     */
+    fun generateConfig(
+        install: AgsInstall,
+        fallbackRomFile: String? = null,
+        rtgWidth: Int = 1920,
+        rtgHeight: Int = 1080,
+    ): String {
+        val agsPath = install.agsDir.absolutePath
+		val (effectiveRtgWidth, effectiveRtgHeight) = normalizeAgsRtgResolution(rtgWidth, rtgHeight)
+        var mountIndex = 0
+        val sb = StringBuilder()
+        sb.appendLine("; Auto-generated AGS_UAE config")
+        sb.appendLine()
+
+        // CPU — A1200 with JIT
+        sb.appendLine("cpu_model=68020")
+        sb.appendLine("cpu_compatible=false")
+        sb.appendLine("cpu_24bit_addressing=false")
+        sb.appendLine("cpu_speed=max")
+        sb.appendLine("fpu_model=68882")
+        sb.appendLine("cachesize=16384")
+        sb.appendLine("compfpu=false")
+
+        // Chipset
+        sb.appendLine("chipset=aga")
+        sb.appendLine("chipset_compatible=A1200")
+        sb.appendLine("immediate_blits=false")
+        sb.appendLine("collision_level=playfields")
+        sb.appendLine("cycle_exact=false")
+        sb.appendLine("ntsc=false")
+
+        // Memory
+        sb.appendLine("chipmem_size=4")     // 2 MB chip RAM (4 × 512 KB)
+        sb.appendLine("bogomem_size=0")
+        sb.appendLine("fastmem_size=0")
+        sb.appendLine("z3mem_size=512")
+
+        // RTG (Picasso96 / UAEGFX)
+        sb.appendLine("gfxcard_type=ZorroIII")
+        sb.appendLine("gfxcard_size=8")
+        sb.appendLine("rtg_nocustom=true")
+        sb.appendLine("rtg_noautomodes=false")
+
+        // Kickstart ROM
+        val romFile = install.romFile ?: fallbackRomFile
+        if (!romFile.isNullOrBlank()) {
+            sb.appendLine("kickstart_rom_file=$romFile")
+        }
+
+        // Floppy (none inserted)
+        sb.appendLine("floppy0=")
+        sb.appendLine("floppy1=")
+        sb.appendLine("floppy1type=-1")
+        sb.appendLine("nr_floppies=1")
+        sb.appendLine("floppy_speed=0")
+
+        // Hard drives — only include files present on disk
+        ALL_HDF_MOUNTS.forEach { (dev, filename) ->
+            val file = File(agsPath, filename)
+            if (file.isFile) {
+                sb.appendLine("hardfile2=rw,$dev:\"${file.absolutePath}\",0,0,0,512,0")
+                if (dev != "DH0") {
+                    sb.appendLine("uaehf${mountIndex}_bootpri=$BOOTPRI_NOAUTOBOOT")
+                }
+                mountIndex++
+            }
+        }
+
+        val sharedDir = File(agsPath, "SHARED")
+        if (sharedDir.isDirectory) {
+            sb.appendLine("filesystem2=rw,$AGS_SHARED_DEVICE:SHARED:\"${sharedDir.absolutePath}\",0")
+            sb.appendLine("uaehf${mountIndex}_bootpri=$BOOTPRI_NOAUTOBOOT")
+        }
+
+        // Sound
+        sb.appendLine("sound_output=exact")
+        sb.appendLine("sound_channels=stereo")
+        sb.appendLine("sound_stereo_separation=1")
+        sb.appendLine("sound_frequency=48000")
+        sb.appendLine("sound_interpol=none")
+
+        // Display
+        sb.appendLine("gfx_width=$effectiveRtgWidth")
+        sb.appendLine("gfx_height=$effectiveRtgHeight")
+        sb.appendLine("gfx_width_windowed=$effectiveRtgWidth")
+        sb.appendLine("gfx_height_windowed=$effectiveRtgHeight")
+        sb.appendLine("gfx_width_fullscreen=$effectiveRtgWidth")
+        sb.appendLine("gfx_height_fullscreen=$effectiveRtgHeight")
+        sb.appendLine("gfx_fullscreen_amiga=fullwindow")
+        sb.appendLine("gfx_fullscreen_picasso=fullwindow")
+        sb.appendLine("gfx_correct_aspect=false")
+        sb.appendLine("gfx_auto_crop=false")
+        sb.appendLine("show_leds=false")
+
+        // Input
+        sb.appendLine("joyport0=mouse")
+        sb.appendLine("joyport1=joy1")
+        sb.appendLine("${UpstreamConfig.KEY_ANDROID_JOYPORT1}=joy1")
+
+        // Keep the Android-specific keyboard button, but disable legacy in-emulator overlays.
+        sb.appendLine("${UpstreamConfig.KEY_TOUCH_SETTINGS_VERSION}=${UpstreamConfig.TOUCH_SETTINGS_VERSION}")
+        sb.appendLine("${UpstreamConfig.KEY_ONSCREEN_JOYSTICK}=false")
+        sb.appendLine("${UpstreamConfig.KEY_AMIBERRY_ONSCREEN_JOYSTICK}=false")
+        sb.appendLine("${UpstreamConfig.KEY_VIRTUAL_KEYBOARD_ENABLED}=false")
+        sb.appendLine("${UpstreamConfig.KEY_DEFAULT_OSK}=false")
+        sb.appendLine("${UpstreamConfig.KEY_SHOW_ANDROID_KEYBOARD_BUTTON}=true")
+
+        // Misc
+        sb.appendLine("use_gui=no")
+        sb.appendLine("bsdsocket_emu=true")
+
+        return sb.toString()
+    }
+
+    /**
+     * Write the config to `conf/ags_auto.uae` under the app's external files
+     * directory and return the absolute path.
+     */
+    fun writeConfig(
+        context: Context,
+        install: AgsInstall,
+        fallbackRomFile: String? = null,
+        rtgWidth: Int = 1920,
+        rtgHeight: Int = 1080,
+    ): String {
+        val confDir = File(context.getExternalFilesDir(null), "conf")
+        confDir.mkdirs()
+        val file = File(confDir, "ags_auto.uae")
+        file.writeText(generateConfig(install, fallbackRomFile, rtgWidth, rtgHeight))
+        return file.absolutePath
+    }
+}

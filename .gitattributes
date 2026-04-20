@@ -1,40 +1,28 @@
-# ---------------------------------------------------------------------------
-# Git export-ignore rules
-#
-# Files and directories marked export-ignore are excluded when creating a
-# source distribution via `git archive` (used by the export-to-public.sh
-# script to populate the uae4arm2026p public repository).
-#
-# The public repo ships pure source code only — no build system glue,
-# no CI/release workflows, no IDE settings, and no compiled artefacts.
-# ---------------------------------------------------------------------------
+# Auto detect text files and perform LF normalization
+* text=auto
 
-# CI / release workflows
-.github/                    export-ignore
+# Declare files that will always have CRLF line endings on checkout.
+*.sln text eol=crlf
+*.vcxproj text eol=crlf
+*.vcxproj.filters text eol=crlf
 
-# CMake build system
-CMakeLists.txt              export-ignore
-cmake/                      export-ignore
+# Denote all files that are truly binary and should not be modified.
+*.png binary
+*.ico binary
+*.bmp binary
+*.ttf binary
 
-# Android build system (Gradle wrapper, build scripts, ProGuard)
-android/build.gradle        export-ignore
-android/settings.gradle     export-ignore
-android/gradle.properties   export-ignore
-android/gradle/             export-ignore
-android/gradlew             export-ignore
-android/gradlew.bat         export-ignore
-android/build_debug.ps1     export-ignore
-android/proguard-rules.pro  export-ignore
+# Custom for Visual Studio
+*.cs     diff=csharp
 
-# Local deployment / release scripts
-scripts/                    export-ignore
-
-# IDE configuration
-.vscode/                    export-ignore
-
-# Upstream reference submodules (reference-only; not part of the distributable)
-amiberry-upstream/          export-ignore
-winuae-upstream/            export-ignore
-
-# Git infrastructure files not needed in the exported tree
-.gitmodules                 export-ignore
+# Standard to msysgit
+*.doc	 diff=astextplain
+*.DOC	 diff=astextplain
+*.docx diff=astextplain
+*.DOCX diff=astextplain
+*.dot  diff=astextplain
+*.DOT  diff=astextplain
+*.pdf  diff=astextplain
+*.PDF	 diff=astextplain
+*.rtf	 diff=astextplain
+*.RTF	 diff=astextplain

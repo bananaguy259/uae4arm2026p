@@ -1,138 +1,171 @@
-# UAE4ARM 2026
+﻿# UAE4ARM 2026
 
-Android-first Amiga emulator build (arm64-v8a) with an SDL2-based native core and a Gradle Android app wrapper.
+[![Android Release Build](https://github.com/CrownParkComputing/uae4arm_2026/actions/workflows/android-release.yml/badge.svg)](https://github.com/CrownParkComputing/uae4arm_2026/actions/workflows/android-release.yml)
 
-This project is derived from the WinUAE lineage and the Amiberry codebase. Amiberry is the original upstream source for much of the non-Windows portability and surrounding tooling.
+**UAE4ARM 2026** is an Android-only Amiga emulator, rebuilt with Jetpack Compose and Material3 around the proven Amiberry/WinUAE emulation core.
 
-## License
+---
 
-This project is released under the **GNU General Public License v3.0**. See [LICENSE](LICENSE) for the full license text.
+## Overview
 
-### Attribution
+UAE4ARM 2026 is a complete Android-first rewrite of the classic UAE4ARM Amiga emulator. This 2026 edition keeps the emulator core in-tree for Android native builds and modernises the app layer with:
 
-This project derives from:
-- **WinUAE** - Developed by Toni Wilen (https://www.winuae.net/)
-- **Amiberry** - Developed by Dimitris Panokostas (https://amiberry.com/)
+- **Jetpack Compose + Material3** UI — fully declarative, responsive layout
+- **Amiberry emulation core** — battle-tested UAE-based core with ARM64 JIT
+- **Drive icon tile UI** — floppy, hard disk, and CD drive slots presented as visual icon cards
+- **Dynamic hard drive slots** — up to 10 HD entries, add/remove at runtime
+- **Single-row memory layout** — Chip, Fast, and Z3 memory on one compact row
+- **UAE4ARM branding** — restored classic UAE4ARM look with 2026 artwork
 
-Both upstream projects are released under the GNU General Public License.
+---
 
-### License Files
-- `LICENSE` - GNU GPL v3.0 (main license)
-- `LICENSES/AMIBERRY_LICENSE.txt` - Amiberry license copy
-- `LICENSES/AMIBERRY_AUTHORS.txt` - Amiberry authors
-
-## Project Structure
+## Codebase Structure
 
 ```
 uae4arm_2026/
-├── amiberry-src/        # Active source code (built into executable)
-├── amiberry-upstream/   # Git submodule: upstream Amiberry (reference)
-├── winuae-upstream/     # Git submodule: upstream WinUAE (reference)
-├── android/             # Android app module (arm64-v8a)
-├── external/            # External dependencies (SDL2, libguisan, etc.)
-├── data/                # Assets (icons, fonts, VKBD graphics)
-├── roms/                # AROS ROMs bundled with APK
-├── whdboot/             # WHDLoad boot files
-├── cmake/               # CMake build configuration
-├── scripts/             # Build and deployment scripts
-├── docs/                # Documentation
-└── LICENSES/            # License files
+├── android/                        # Android Kotlin/Compose app + Gradle project
+│   ├── app/
+│   │   └── src/main/
+│   │       ├── java/com/uae4arm2026/
+│   │       │   ├── data/
+│   │       │   │   ├── ConfigGenerator.kt      # Writes .uae config files
+│   │       │   │   ├── ConfigParser.kt         # Parses .uae config files
+│   │       │   │   └── model/
+│   │       │   │       └── EmulatorSettings.kt # All emulator config state
+│   │       │   └── ui/
+│   │       │       ├── screens/
+│   │       │       │   ├── Uae4ArmHomeScreen.kt     # Main home screen
+│   │       │       │   └── settings/
+│   │       │       │       ├── StorageTab.kt        # Disk/drive file pickers
+│   │       │       │       ├── SystemTab.kt         # CPU/memory settings
+│   │       │       │       └── InputTab.kt          # Controller/keyboard
+│   │       │       └── viewmodel/
+│   │       │           └── SettingsViewModel.kt     # Settings state & logic
+│   │       └── res/
+│   │           ├── drawable/                   # UAE4ARM artwork + icons
+│   │           └── mipmap-*/                   # Launcher icon variants
+│   ├── build.gradle                # App module Gradle config
+│   ├── gradle/                     # Version catalogs (libs.versions.toml)
+│   └── gradlew / gradlew.bat       # Gradle wrapper
+├── src/                            # Native emulator core built by Android externalNativeBuild
+│   ├── osdep/                      # Platform abstraction
+│   ├── jit/                        # ARM64 + x86-64 JIT compiler
+│   ├── custom.cpp                  # Amiga custom chips (Agnus/Denise/Paula)
+│   ├── newcpu.cpp                  # M68K CPU interpreter
+│   └── memory.cpp                  # Memory banking
+├── CMakeLists.txt                  # Native Android build entry point + version source of truth
+├── cmake/                          # Android-focused CMake helpers used by the native build
+├── external/                       # Vendored native dependencies
+├── amiberry-src/                   # Upstream Amiberry snapshot used for sync tracking
+└── .github/workflows/
+    └── android-release.yml         # CI: build + sign + release APK/AAB
 ```
 
-## Git Submodules
+---
 
-This project uses Git submodules to track upstream sources:
+## Key Files
 
-- **amiberry-upstream** - [Amiberry GitHub](https://github.com/BlitterStudio/amiberry)
-- **winuae-upstream** - [WinUAE GitHub](https://github.com/tonioni/WinUAE)
+| File | Purpose |
+|------|---------|
+| `android/app/src/main/java/.../ui/screens/Uae4ArmHomeScreen.kt` | Main UI — drive icon cards, launch button, recent configs |
+| `android/app/src/main/java/.../data/model/EmulatorSettings.kt` | All emulator settings including `hardDrives: List<String>` |
+| `android/app/src/main/java/.../data/ConfigParser.kt` | Parses `.uae` config files into `EmulatorSettings` |
+| `android/app/src/main/java/.../data/ConfigGenerator.kt` | Generates `.uae` config file content from `EmulatorSettings` |
+| `android/app/src/main/java/.../ui/viewmodel/SettingsViewModel.kt` | Manages settings state, generates SDL launch args |
+| `CMakeLists.txt` | `project(VERSION 4.1.1)` — single version source for app + core |
 
-### Cloning with Submodules
+---
 
-```bash
-# Clone with submodules
-git clone --recurse-submodules https://github.com/CrownParkComputing/uae4arm_2026.git
+## Version
 
-# Or initialize after cloning
-git submodule update --init --recursive
+Version is defined once in `CMakeLists.txt`:
+
+```cmake
+project(uae4arm
+    VERSION 4.1.1
+    ...
+)
 ```
 
-### Updating Submodules
+`android/app/build.gradle` reads this automatically and computes `versionCode` and `versionName`.
 
-```bash
-# Update to latest upstream
-git submodule update --remote amiberry-upstream
-git submodule update --remote winuae-upstream
-```
+---
 
-## Highlights
+## Building
 
-- Android app module under `android/` (arm64-v8a only)
-- Release tooling under `release_dashboard/` (AAB/APK exports, Play Store assets)
-- Native emulator sources under `amiberry-src/` with CMake build
-- Upstream sources as git submodules for easy tracking
+### Prerequisites
 
-## Quickstart (Windows)
+- Android Studio or Android SDK/NDK command-line tooling
+- JDK 21 (`JAVA_HOME` = Android Studio JBR)
+- Android SDK with NDK r28.0.13004108, CMake 3.22.1, build-tools 36, platform 36
 
-Build a debug APK:
+### Debug build (local device)
 
 ```powershell
-android\gradlew.bat -p android --no-daemon --console=plain assembleDebug
+$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
+cd android
+.\gradlew installDebug
 ```
 
-Install on a connected device:
+### Release build
 
-```cmd
-adb install -r "android\build\outputs\apk\debug\uae4arm_2026-debug.apk"
+```powershell
+$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
+cd android
+.\gradlew assembleRelease
 ```
 
-## Documentation
+Release signing requires `android/keystore.properties` (git-ignored):
 
-- Source code organization: `amiberry-src/README.md`
-- Android module details: `android/README.md`
-- Release dashboard: `release_dashboard/README.md`
-- Additional docs: `docs/README.md`
+```properties
+storeFile=../keystore/uae4arm26-upload.jks
+storePassword=<password>
+keyAlias=uae4arm26-upload
+keyPassword=<password>
+```
 
-## GitHub Actions CI
+---
 
-Automated Android release builds are configured via GitHub Actions. The workflow file is at `.github/workflows/android-release.yml`.
+## CI / GitHub Actions
 
-## Source Code Organization
+The workflow `.github/workflows/android-release.yml` triggers on:
 
-### amiberry-src/
-Contains the active source code that is compiled into the UAE4ARM 2026 executable. See `amiberry-src/README.md` for detailed documentation on:
-- What is imported from Amiberry
-- What is excluded and why
-- Android-specific modifications
+- Every push to `main` (when Android or core source changes)
+- Any `v*` tag push
+- Manual `workflow_dispatch`
 
-### amiberry-upstream/ (Git Submodule)
-Complete upstream Amiberry source code. Used as reference for:
-- Comparing local modifications
-- Merging upstream updates
-- Understanding original implementation
+It builds both an APK and AAB, signs with the keystore decoded from the `RELEASE_KEYSTORE_BASE64` secret, uploads artifacts, and creates a GitHub Release. Required repository secrets:
 
-### winuae-upstream/ (Git Submodule)
-Complete upstream WinUAE source code. Used as reference for:
-- Original Windows implementation
-- Core emulation code
-- Understanding Amiga hardware emulation
+| Secret | Value |
+|--------|-------|
+| `RELEASE_KEYSTORE_BASE64` | Base64-encoded `.jks` keystore |
+| `RELEASE_STORE_PASSWORD` | Keystore password |
+| `RELEASE_KEY_ALIAS` | Key alias (`uae4arm26-upload`) |
+| `RELEASE_KEY_PASSWORD` | Key password |
 
-## What's Imported vs Excluded
+The workflow `.github/workflows/public-source-mirror.yml` publishes the latest source snapshot from this repository to the public mirror repository `CrownParkComputing/uae4arm2026p`, always overwriting the public repository's `main` branch with the newest mirrored source. It excludes `.github/workflows/` from the mirrored snapshot so the public mirror can be updated with a standard contents-write token. It requires one additional secret:
 
-### Imported from Amiberry
-- Core CPU emulation (68000-68060)
-- Custom chip emulation (Agnus, Denise, Paula)
-- Memory and expansion handling
-- Graphics rendering (line to screen, RTG)
-- Audio output
-- File system and hard drive support
-- Archive handling (LHA, ZIP, DMS)
+| Secret | Value |
+|--------|-------|
+| `PUBLIC_MIRROR_TOKEN` | Personal access token with contents write access to `CrownParkComputing/uae4arm2026p` |
 
-### Excluded from Android Build
-- **Desktop GUI** - Android uses native Java UI
-- **Virtual Keyboard** - Android has its own input methods
-- **CHD archiver** - Excluded for minimal build size
-- **PCEm x86** - Disabled in Android build
-- **FloppyBridge** - Real floppy requires hardware
-- **Libretro** - Separate RetroArch project
+---
 
-See `amiberry-src/README.md` for complete details.
+## Upstream Sync
+
+This repository does not consume Amiberry as a git submodule. Instead, it tracks Amiberry as an explicit git remote named `upstream`, and keeps a traceable snapshot under `amiberry-src/`.
+
+- Upstream repo: `https://github.com/BlitterStudio/amiberry.git`
+- Upstream branch: `master`
+- Comparison script: `scripts/git/compare-amiberry-upstream.ps1`
+- Sync procedure and ledger: `docs/upstream-sync.md`
+
+Use the comparison script before and after any upstream import so each sync is anchored to a specific Amiberry commit.
+
+---
+
+## License
+
+Licensed under the [GNU General Public License v3.0](LICENSE).
+
+UAE4ARM 2026 builds on open source work from [Amiberry](https://github.com/BlitterStudio/amiberry) and [WinUAE](https://www.winuae.net/). The original UAE4ARM project is by Chips (Georgiou Konstantinos).

@@ -1,71 +1,11 @@
 # enriched with templates from https://www.gitignore.io/
 
-# Windows reserved filename (created by accident)
-nul
-
 # Amiberry files
 conf/*.uae
 conf/*.conf
 roms/*.rom
 roms/*.key
-/amiberry.conf
-/amiberry.log
-
-# Local debug/build artifacts (do not commit)
-_redir_test.txt
-InstallationLog.txt
-vkbd_logcat*.txt
-logcat_*.txt
-buildlog-*.txt
-assembleDebug_run*.txt
-*stacktrace*.txt
-projects_out*.txt
-projects_stacktrace*.txt
-
-# Android local build output dumps
-android/gradle_assembleDebug.txt
-android/gradle_setup_build.txt
-android/last_build*.txt
-android/found_apks.txt
-android/device_bootstrap_prefs*.xml
-
-# Android local crash/logcat captures
-android/*logcat*.txt
-android/*crash*.txt
-android/*_logs.txt
-android/*_scan.txt
-android/*.txt
-*.log
-*.err.log
-
-# Consolidated local debug artifacts
-artifacts/local-debug/
-
-# --- Android local ROM assets (do not commit) ---
-# If you want to bundle AROS ROMs into the APK, place them in either:
-# - android/src/main/assets/roms/ (direct)
-# - android/roms-src/roms/ (preferred; build.gradle adds this as an extra assets dir)
-android/src/main/assets/roms/aros-rom.bin
-android/src/main/assets/roms/aros-ext.bin
-android/roms-src/roms/aros-rom.bin
-android/roms-src/roms/aros-ext.bin
-
-# Generated WHDboot assets are bundled from ../whdboot
-android/src/main/assets/whdboot/
-
-# --- Large HDF files (do not commit) ---
-*.hdf
-whdboot/boot-hdf/
-
-# --- Android signing (do not commit) ---
-android/keystore.properties
-android/keystore/*.jks
-android/keystore/*.keystore
-
-# Android release artifacts (do not commit)
-*.apk
-*.aab
-release.keystore
+/amiberry*
 
 # Build directories and CMake
 cmake-build-*
@@ -143,13 +83,15 @@ gen/
 out/
 build/
 .externalNativeBuild
-android/.cxx/
 captures/
 .navigation/
 *.ipr
 *~
 *.swp
 obj/
+
+# Logs
+*.log
 
 # Miscellaneous
 *.db
@@ -202,4 +144,22 @@ Brewfile.lock.json
 
 # Gradle wrapper
 !/gradle/wrapper/gradle-wrapper.jar
+
+# Android subproject specific
+/android/local.properties
+/android/keystore.properties
+*.keystore
+*.jks
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/.idea/
+android/app/src/main/assets/data
+android/app/src/main/assets/controllers
+android/app/src/main/assets/roms
+android/app/src/main/assets/whdboot
 android/local.properties
+.claude/settings.local.json
+build-debug
+.cache
+.sisyphus/

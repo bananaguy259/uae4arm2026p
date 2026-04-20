@@ -1,0 +1,249 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.jetbrains.kotlin.plugin.compose)
+}
+
+// Firebase plugins are only applied when google-services.json is present.
+// This allows CI builds and contributors without Firebase to build successfully.
+def hasFirebase = file('google-services.json').exists()
+if (hasFirebase) {
+    apply plugin: 'com.google.gms.google-services'
+    apply plugin: 'com.google.firebase.crashlytics'
+}
+
+def readCmakeVersionInfo = {
+    def cmakeFile = rootProject.file("../CMakeLists.txt")
+    if (!cmakeFile.exists()) {
+        throw new GradleException("Missing CMakeLists.txt at ${cmakeFile}")
+    }
+
+    def cmakeText = cmakeFile.getText("UTF-8")
+    def versionMatcher = (cmakeText =~ /(?m)^\s*VERSION\s+(\d+)\.(\d+)\.(\d+)\s*$/)
+    if (!versionMatcher.find()) {
+        throw new GradleException("Could not parse VERSION x.y.z from ${cmakeFile}")
+    }
+
+    def preReleaseMatcher = (cmakeText =~ /(?m)^\s*set\(VERSION_PRE_RELEASE\s+"?([^")]*)"?/)
+    Integer preRelease = null
+    if (preReleaseMatcher.find()) {
+        def raw = preReleaseMatcher.group(1).trim()
+        if (raw && raw != "0") {
+            if (!(raw ==~ /\d+/)) {
+                throw new GradleException("VERSION_PRE_RELEASE must be numeric in ${cmakeFile}, found '${raw}'")
+            }
+            preRelease = raw.toInteger()
+        }
+    }
+
+    return [
+            major     : versionMatcher.group(1).toInteger(),
+            minor     : versionMatcher.group(2).toInteger(),
+            patch     : versionMatcher.group(3).toInteger(),
+            preRelease: preRelease
+    ]
+}
+
+def computeAndroidVersionCode = { info ->
+    // Version prefix ensures version bumps always produce a higher code.
+    // Minute-of-day suffix (0–1439) makes each build unique within a day
+    // without requiring a CMake version bump.
+    // Formula: major * 100_000_000 + minor * 1_000_000 + patch * 10_000 + minuteOfDay
+    // Example: 8.1.5 at 14:30 → 801_050_870
+    // Max usable major version: 21 (2.1B int32 limit)
+    def now = java.util.Calendar.getInstance()
+    def minuteOfDay = now.get(java.util.Calendar.HOUR_OF_DAY) * 60 + now.get(java.util.Calendar.MINUTE)
+    return info.major * 100_000_000 + info.minor * 1_000_000 + info.patch * 10_000 + minuteOfDay
+}
+
+def formatAndroidVersionName = { info ->
+    def base = "${info.major}.${info.minor}.${info.patch}"
+    return info.preRelease ? "${base}-beta${info.preRelease}" : base
+}
+
+def cmakeVersionInfo = readCmakeVersionInfo()
+def computedVersionCode = computeAndroidVersionCode(cmakeVersionInfo)
+def computedVersionName = formatAndroidVersionName(cmakeVersionInfo)
+def versionCodeOverride = providers.gradleProperty("ANDROID_VERSION_CODE").orNull
+def androidVersionCode = computedVersionCode
+if (versionCodeOverride != null) {
+    if (!(versionCodeOverride ==~ /\d+/)) {
+        throw new GradleException("ANDROID_VERSION_CODE must be a positive integer, found '${versionCodeOverride}'")
+    }
+    androidVersionCode = versionCodeOverride.toInteger()
+    if (androidVersionCode <= 0) {
+        throw new GradleException("ANDROID_VERSION_CODE must be > 0")
+    }
+}
+
+// Load keystore credentials from keystore.properties (git-ignored)
+def keystorePropertiesFile = rootProject.file("keystore.properties")
+def keystoreProperties = new Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
+android {
+    namespace = 'com.uae4arm2026'
+    compileSdk = 36
+
+    defaultConfig {
+        applicationId = "com.uae4arm2026"
+        minSdk = 29
+        targetSdk = 36
+        versionCode = androidVersionCode
+        versionName = computedVersionName
+
+        externalNativeBuild {
+            cmake {
+                cppFlags = ["-std=c++17"]
+                arguments = ["-DANDROID_STL=c++_shared"]
+            }
+        }
+
+        ndk {
+            abiFilters = ['arm64-v8a']
+        }
+    }
+
+    signingConfigs {
+        release {
+            if (keystorePropertiesFile.exists()) {
+                storeFile = file(keystoreProperties['storeFile'])
+                storePassword = keystoreProperties['storePassword']
+                keyAlias = keystoreProperties['keyAlias']
+                keyPassword = keystoreProperties['keyPassword']
+            }
+
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+            enableV4Signing = true
+        }
+    }
+
+    buildTypes {
+        debug {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+            debuggable = true
+            jniDebuggable = true
+        }
+        release {
+            if (keystorePropertiesFile.exists()) {
+                signingConfig = signingConfigs.release
+            }
+            minifyEnabled = true
+            shrinkResources = true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file('../../CMakeLists.txt')
+            version = '3.22.1'
+        }
+    }
+
+    buildFeatures {
+        prefab = true
+        viewBinding = true
+        compose = true
+    }
+
+    // Upload native symbols for Crashlytics NDK crash reports
+    if (hasFirebase) {
+        firebaseCrashlytics {
+            nativeSymbolUploadEnabled true
+        }
+    }
+
+    lint {
+        abortOnError = false
+        warningsAsErrors = false
+        checkDependencies = true
+        lintConfig = file('lint.xml')
+        htmlReport = true
+        htmlOutput = file("${project.buildDir}/reports/lint-results.html")
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    ndkVersion = '28.0.13004108'
+
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = JvmTarget.JVM_17
+    }
+}
+
+dependencies {
+    implementation libs.androidx.appcompat
+    implementation libs.material
+    implementation libs.androidx.constraintlayout
+
+    // Firebase Crashlytics (crash reporting for JVM + native)
+    // Only included when google-services.json is present
+    if (hasFirebase) {
+        implementation platform('com.google.firebase:firebase-bom:33.8.0')
+        implementation 'com.google.firebase:firebase-crashlytics'
+        implementation 'com.google.firebase:firebase-crashlytics-ndk'
+    }
+
+    // Splash Screen API (Android 12+ compatible back to API 23)
+    implementation libs.androidx.core.splashscreen
+    implementation libs.androidx.documentfile
+
+    // Play In-App Review
+    implementation libs.review.ktx
+
+    // Jetpack Compose
+    implementation platform(libs.androidx.compose.bom)
+    implementation libs.androidx.compose.material3
+    implementation libs.androidx.compose.ui
+    implementation libs.androidx.compose.ui.tooling.preview
+    implementation libs.androidx.compose.material.icons.extended
+    implementation libs.androidx.activity.compose
+    implementation libs.androidx.navigation.compose
+    implementation libs.androidx.lifecycle.viewmodel.compose
+    implementation libs.androidx.lifecycle.runtime.compose
+    debugImplementation libs.androidx.compose.ui.tooling
+
+    // Unit tests
+    testImplementation libs.junit
+}
+
+
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs << "-Xlint:deprecation"
+}
+
+tasks.register('copyAssets', Copy) {
+    description = 'Copies Amiberry data files to Android assets'
+    into 'src/main/assets'
+
+    from('../../data') {
+        into 'data'
+    }
+    from('../../controllers') {
+        into 'controllers'
+    }
+    from('../../roms') {
+        into 'roms'
+    }
+    from('../../whdboot') {
+        into 'whdboot'
+    }
+}
+
+preBuild.dependsOn copyAssets

@@ -40,7 +40,7 @@ DEFINE_GUID(GUID_DEVINTERFACE_COMPORT,0x86e0d1e0, 0x8089, 0x11d0, 0x9c, 0xe4, 0x
 #endif
 
 // OS X, sigurbjornl, 20220208
-#elif defined __MACH__ || defined(__FreeBSD__)
+#elif defined __MACH__ || defined(__FreeBSD__) || defined(__HAIKU__)
 
 #include <sys/stat.h>
 #include <dirent.h>
@@ -49,7 +49,9 @@ DEFINE_GUID(GUID_DEVINTERFACE_COMPORT,0x86e0d1e0, 0x8089, 0x11d0, 0x9c, 0xe4, 0x
 #include <sys/ioctl.h>
 #include <cerrno>
 #include <cstring>
+#ifndef __HAIKU__
 #include <term.h>
+#endif
 #include <termios.h>
 #ifdef __MACH__
 #include <IOKit/serial/ioss.h> // Only available on macOS
@@ -79,18 +81,24 @@ DEFINE_GUID(GUID_DEVINTERFACE_COMPORT,0x86e0d1e0, 0x8089, 0x11d0, 0x9c, 0xe4, 0x
 #endif
 
 #include <string>
-#include <codecvt>
-#include <locale>
 #include <algorithm>
 
-using convert_t = std::codecvt_utf8<wchar_t>;
-static std::wstring_convert<convert_t, wchar_t> strconverter;
-
+// Simple wstring to string conversion (ASCII-safe for serial port names)
 void quickw2a(const std::wstring& wstr, std::string& str) {
-	str = strconverter.to_bytes(wstr);
+	str.clear();
+	str.reserve(wstr.size());
+	for (wchar_t wc : wstr) {
+		str.push_back(static_cast<char>(wc & 0xFF));
+	}
 }
+
+// Simple string to wstring conversion
 void quicka2w(const std::string& str, std::wstring& wstr) {
-	wstr = strconverter.from_bytes(str);
+	wstr.clear();
+	wstr.reserve(str.size());
+	for (char c : str) {
+		wstr.push_back(static_cast<wchar_t>(static_cast<unsigned char>(c)));
+	}
 }
 
 // Constructor etc
@@ -323,10 +331,10 @@ void SerialIO::enumSerialPorts(std::vector<SerialPortInformation>& serialPorts) 
 
 						// Description
 						DWORD type;
-						if (SetupDiGetDeviceProperty(hDevInfoSet, &devInfo, &DEVPKEY_Device_BusReportedDeviceDesc2, &type, (PBYTE)name, 128, 0, 0)) port.productName = name;
+						if (SetupDiGetDevicePropertyW(hDevInfoSet, &devInfo, &DEVPKEY_Device_BusReportedDeviceDesc2, &type, (PBYTE)name, 128, 0, 0)) port.productName = name;
 
 						// Instance
-						if (SetupDiGetDeviceProperty(hDevInfoSet, &devInfo, &DEVPKEY_Device_InstanceId2, &type, (PBYTE)name, 128, 0, 0)) port.instanceID = name;
+						if (SetupDiGetDevicePropertyW(hDevInfoSet, &devInfo, &DEVPKEY_Device_InstanceId2, &type, (PBYTE)name, 128, 0, 0)) port.instanceID = name;
 
 						// Don't add any duplicates
 						if (std::find_if(serialPorts.begin(), serialPorts.end(), [&port](SerialPortInformation search)->bool {
@@ -344,17 +352,27 @@ void SerialIO::enumSerialPorts(std::vector<SerialPortInformation>& serialPorts) 
 	}
 
 #else
-#if defined(__APPLE__) || defined(__FreeBSD__)
+#if defined(__HAIKU__)
+	DIR* dir = opendir("/dev/ports");
+#elif defined(__APPLE__) || defined(__FreeBSD__)
 	DIR* dir = opendir("/dev");
 #else
 	DIR* dir = opendir("/sys/class/tty");
-#endif	
+#endif
 	if (!dir) return;
 	dirent* entry;
 	struct stat statbuf{};
 
 	while ((entry = readdir(dir))) {
-#if defined(__APPLE__) || defined(__FreeBSD__)
+#if defined(__HAIKU__)
+		if (entry->d_name[0] == '.') continue;
+		std::string name = "/dev/ports/" + std::string(entry->d_name);
+		if (stat(name.c_str(), &statbuf) == -1) continue;
+		if (!S_ISCHR(statbuf.st_mode)) continue;
+		SerialPortInformation prt;
+		quicka2w(name, prt.portName);
+		serialPorts.push_back(prt);
+#elif defined(__APPLE__) || defined(__FreeBSD__)
 		std::string tmp = entry->d_name;
 		if (tmp.substr(0,7) != "tty.usb") continue;
 		std::string name = "/dev/" + std::string(entry->d_name);
@@ -502,7 +520,7 @@ SerialIO::Response SerialIO::openPort(const std::wstring& portName) {
 #else
 	std::string apath;
 	quickw2a(portName, apath);
-#if defined(__APPLE__) || defined(__FreeBSD__)
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__HAIKU__)
 	m_portHandle = open(apath.c_str(), O_RDWR | O_NOCTTY | O_NDELAY);
 #else
 	m_portHandle = open(apath.c_str(), O_RDWR | O_NOCTTY);
@@ -670,7 +688,7 @@ SerialIO::Response SerialIO::configurePort(const Configuration& configuration) {
     if (ioctl(m_portHandle, IOSSIOSPEED, &baud) == -1)
         return Response::rUnknownError;
 
-#elif defined(__FreeBSD__)
+#elif defined(__FreeBSD__) || defined(__HAIKU__)
 
     // FreeBSD uses termios functions to set baud rate
     struct termios options;
@@ -714,7 +732,7 @@ SerialIO::Response SerialIO::configurePort(const Configuration& configuration) {
 #endif
 #if defined(__APPLE__)
     if (ioctl(m_portHandle, IOSSIOSPEED, &baud) == -1) return Response::rUnknownError;
-#elif defined(__FreeBSD__)
+#elif defined(__FreeBSD__) || defined(__HAIKU__)
     // FreeBSD does not support IOSSIOSPEED, use termios instead
     if (cfsetispeed(&term, baud) != 0 || cfsetospeed(&term, baud) != 0)
         return Response::rUnknownError;
