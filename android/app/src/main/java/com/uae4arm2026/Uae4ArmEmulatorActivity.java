@@ -4,8 +4,10 @@ import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.ParcelFileDescriptor;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.ViewGroup;
@@ -24,7 +26,9 @@ import com.uae4arm2026.data.model.FileCategory;
 import org.libsdl.app.SDLActivity;
 
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 
 public class Uae4ArmEmulatorActivity extends SDLActivity {
@@ -36,6 +40,8 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 	private boolean pauseMenuPausedEmulation = false;
 	private boolean keepPausedForSubdialog = false;
 	private boolean leavingEmulator = false;
+
+	private final List<ParcelFileDescriptor> openFileDescriptors = new ArrayList<>();
 
 	// SDL3-specific notes
 	//   • getLibraries() is overridden to load only the UAE4Arm shared library.
@@ -76,10 +82,169 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 		if (intent != null) {
 			String[] args = intent.getStringArrayExtra("SDL_ARGS");
 			if (args != null) {
-				return args;
+				String[] translated = translateArguments(args);
+				android.util.Log.d("Uae4Arm-SDL", "Launching with args: " + java.util.Arrays.toString(translated));
+				return translated;
 			}
 		}
 		return new String[0];
+	}
+
+	private String[] translateArguments(String[] args) {
+		String[] result = new String[args.length];
+		for (int i = 0; i < args.length; i++) {
+			String arg = args[i];
+			if ("--config".equals(arg) && i + 1 < args.length) {
+				// Handle config file translation
+				String configPath = args[i + 1];
+				result[i] = arg;
+				result[i + 1] = translateConfigFile(configPath);
+				i++; // Skip the next arg as we handled it
+				continue;
+			}
+			
+			if (arg.contains("=") && !arg.startsWith("-")) {
+				// key=value format (config overrides)
+				int eq = arg.indexOf('=');
+				String key = arg.substring(0, eq);
+				String value = arg.substring(eq + 1);
+
+				// NEVER translate directory paths to FD paths.
+				// Appending a filename to a /proc/self/fd/NN/ path is invalid.
+				if (isDirectoryKey(key)) {
+					result[i] = arg;
+					continue;
+				}
+
+				if (value.startsWith("/") && !FileManager.INSTANCE.isAppOwnedPath(this, value)) {
+					String translatedValue = translatePathToFd(value);
+					result[i] = key + "=" + translatedValue;
+				} else {
+					result[i] = arg;
+				}
+			} else if (arg.startsWith("/") && !FileManager.INSTANCE.isAppOwnedPath(this, arg)) {
+				// Standalone path argument - only translate if it looks like a file
+				if (arg.contains(".")) {
+					result[i] = translatePathToFd(arg);
+				} else {
+					result[i] = arg;
+				}
+			} else {
+				result[i] = arg;
+			}
+		}
+		return result;
+	}
+
+	private boolean isDirectoryKey(String key) {
+		return key.endsWith("_path") || 
+			   key.equals("whdload_arch_path") || 
+			   key.equals("config_path") ||
+			   key.equals("path_rom");
+	}
+
+	private String translateConfigFile(String configPath) {
+		File original = new File(configPath);
+		if (!original.exists()) return configPath;
+
+		try {
+			List<String> lines = java.nio.file.Files.readAllLines(original.toPath());
+			List<String> translatedLines = new ArrayList<>();
+			boolean changed = false;
+
+			for (String line : lines) {
+				String trimmed = line.trim();
+				if (trimmed.isEmpty() || trimmed.startsWith(";") || !trimmed.contains("=")) {
+					translatedLines.add(line);
+					continue;
+				}
+
+				int eq = line.indexOf('=');
+				String key = line.substring(0, eq).trim();
+				String value = line.substring(eq + 1).trim();
+
+				// Strip quotes if present (UAE allows DH0:"/path/to/hdf")
+				String rawPath = value;
+				String prefix = "";
+				String suffix = "";
+				
+				// Handle hardfile2=rw,DH0:"/path/to/hdf",...
+				if (value.contains("\"/")) {
+					int qStart = value.indexOf("\"/");
+					int qEnd = value.lastIndexOf("\"");
+					if (qEnd > qStart) {
+						prefix = value.substring(0, qStart + 1);
+						rawPath = value.substring(qStart + 1, qEnd);
+						suffix = value.substring(qEnd);
+					}
+				} else if (value.startsWith("/")) {
+					rawPath = value;
+				}
+
+				if (rawPath.startsWith("/") && !FileManager.INSTANCE.isAppOwnedPath(this, rawPath)) {
+					File file = new File(rawPath);
+					boolean isDir = file.isDirectory() || key.equals("filesystem2") || value.contains("=dir,") || value.startsWith("dir,");
+					if (isDir) {
+						// Directories cannot be represented as a single FD for traversals
+						translatedLines.add(line);
+					} else {
+						String translatedPath = translatePathToFd(rawPath);
+						translatedLines.add(line.substring(0, eq + 1) + prefix + translatedPath + suffix);
+						changed = true;
+					}
+				} else {
+					translatedLines.add(line);
+				}
+			}
+
+			if (changed) {
+				File translatedFile = new File(getExternalFilesDir(null), "conf/.translated.uae");
+				java.nio.file.Files.write(translatedFile.toPath(), translatedLines);
+				android.util.Log.d("Uae4Arm-SDL", "Translated config " + configPath + " -> " + translatedFile.getAbsolutePath());
+				return translatedFile.getAbsolutePath();
+			}
+		} catch (IOException e) {
+			android.util.Log.e("Uae4Arm-SDL", "Failed to translate config file: " + configPath, e);
+		}
+
+		return configPath;
+	}
+
+	private String translatePathToFd(String path) {
+		if (path.startsWith("/proc/self/fd/")) return path;
+		
+		Uri contentUri = null;
+		if (path.startsWith("content://")) {
+			contentUri = Uri.parse(path);
+		} else {
+			contentUri = FileManager.INSTANCE.findContentUriForPath(this, path);
+		}
+
+		if (contentUri == null) {
+			android.util.Log.w("Uae4Arm-SDL", "Could not find content URI for external path: " + path);
+			return path;
+		}
+
+		try {
+			// Open for read/write if possible, fallback to read
+			ParcelFileDescriptor pfd;
+			try {
+				pfd = getContentResolver().openFileDescriptor(contentUri, "rw");
+			} catch (Exception e) {
+				pfd = getContentResolver().openFileDescriptor(contentUri, "r");
+			}
+
+			if (pfd != null) {
+				openFileDescriptors.add(pfd);
+				int fd = pfd.getFd();
+				String fdPath = "/proc/self/fd/" + fd;
+				android.util.Log.d("Uae4Arm-SDL", "Translated " + path + " -> " + fdPath);
+				return fdPath;
+			}
+		} catch (FileNotFoundException e) {
+			android.util.Log.e("Uae4Arm-SDL", "Failed to open FD for " + contentUri, e);
+		}
+		return path;
 	}
 
 	private boolean pauseMenuVisible = false;
@@ -492,6 +657,12 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 			com.uae4arm2026.data.EmulatorLauncher.INSTANCE.clearSessionMarker(this);
 		}
 		super.onDestroy();
+		for (ParcelFileDescriptor pfd : openFileDescriptors) {
+			try {
+				pfd.close();
+			} catch (IOException ignored) {}
+		}
+		openFileDescriptors.clear();
 		if (finishing) {
 			android.os.Process.killProcess(android.os.Process.myPid());
 		}

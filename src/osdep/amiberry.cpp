@@ -5827,7 +5827,8 @@ bool file_exists(const std::string& file)
 	namespace fs = std::filesystem;
 #endif
 	fs::path f{ file };
-	return (fs::exists(f));
+	std::error_code ec;
+	return fs::exists(f, ec) && !ec;
 }
 
 #ifdef _WIN32

@@ -22,7 +22,7 @@ option(USE_LIBENET       "Use LibENET for network emulation" ON)
 option(USE_PORTMIDI      "Use PortMidi for MIDI emulation" ON)
 option(USE_ZSTD          "Use Zstandard for CHD compressed disk images" ON)
 option(USE_OPENGL        "Use OpenGL for rendering" ON)
-option(USE_GLES          "Use OpenGL ES instead of desktop OpenGL" OFF)
+option(USE_GLES          "Use OpenGL ES instead of desktop OpenGL" ON)
 option(USE_VULKAN        "Use Vulkan for rendering (experimental, mutually exclusive with USE_OPENGL)" OFF)
 option(WITH_LTO          "Enable Link Time Optimization" OFF)
 option(WITH_OPTIMIZE     "Enable GCC native CPU optimizations" OFF)
@@ -39,7 +39,8 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "riscv" OR CMAKE_HOST_SYSTEM_PROCESSOR MATCHES
 endif()
 
 if(ANDROID)
-    # Android 15+ (API 35) requires 16KB page size alignment for Play Store
+    # Android 15+ (API 35) requires 16KB page size alignment for Play Store.
+    # We apply it to all Android builds to ensure forward compatibility.
     add_link_options("-Wl,-z,max-page-size=16384")
 endif()
 

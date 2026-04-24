@@ -278,6 +278,7 @@ bool OpenGLRenderer::alloc_texture(int monid, int w, int h)
 	// Use built-in crtemu shaders
 	if (m_shader.crtemu == nullptr) {
 		const int crt_type = get_crtemu_type(shader_name, m_shader);
+		write_log("TRACE: creating built-in shader type %d (requested: %s)\n", crt_type, shader_name ? shader_name : "null");
 		m_shader.crtemu = crtemu_create(static_cast<crtemu_type_t>(crt_type), nullptr);
 
 		// Fallback to NONE if shader creation failed
@@ -286,14 +287,20 @@ bool OpenGLRenderer::alloc_texture(int monid, int w, int h)
 			m_shader.crtemu = crtemu_create(CRTEMU_TYPE_NONE, nullptr);
 		}
 
+		if (m_shader.crtemu) {
+			write_log("TRACE: built-in shader created successfully\n");
+		} else {
+			write_log("TRACE: ERROR: Failed to create built-in shader (even NONE)\n");
+		}
+
 		update_crtemu_bezel();
 	}
 	return m_shader.crtemu != nullptr || m_shader.external != nullptr || m_shader.preset != nullptr;
 }
 
 // Helper to decide between Linear (smooth) and Nearest Neighbor (pixelated) scaling
-static bool ar_is_exact(const SDL_DisplayMode* mode, const int width, const int height)
-{
+    static bool ar_is_exact(const SDL_DisplayMode* mode, const int width, const int height)
+    {
 	return mode->w % width == 0 && mode->h % height == 0;
 }
 
@@ -400,6 +407,11 @@ void OpenGLRenderer::present_frame(int monid, int mode)
 {
 	AmigaMonitor* mon = &AMonitors[monid];
 	SDL_Surface* surface = get_amiga_surface(monid);
+
+	if (!surface) {
+		write_log("TRACE: present_frame: surface is NULL\n");
+		return;
+	}
 
 	const auto time = SDL_GetTicks();
 
@@ -586,6 +598,12 @@ void OpenGLRenderer::present_frame(int monid, int mode)
 		destY = (renderAreaH - destH) / 2;
 	}
 
+	static int trace_count = 0;
+	if (trace_count++ % 60 == 0) {
+		write_log("TRACE: present_frame: monid=%d, surface=%dx%d, drawable=%dx%d, dest=%d,%d %dx%d, aspect=%.4f\n",
+			monid, surface->w, surface->h, drawableWidth, drawableHeight, destX, destY, destW, destH, desired_aspect);
+	}
+
 	// Flip Y for GL viewport: OpenGL has y=0 at bottom, bezel hole Y is y=0 at top
 	int glDestY = drawableHeight - destY - destH;
 	int glAreaY = drawableHeight - renderAreaY - renderAreaH;
@@ -701,6 +719,11 @@ void OpenGLRenderer::present_frame(int monid, int mode)
 	render_onscreen_cd32pad(monid);
 
 	SDL_GL_SwapWindow(mon->amiga_window);
+
+	GLenum err = glGetError();
+	if (err != GL_NO_ERROR) {
+		write_log("TRACE: glGetError after SwapWindow: 0x%04X\n", err);
+	}
 }
 
 // --- External shader rendering ---

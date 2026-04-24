@@ -167,6 +167,11 @@ include(FetchContent)
         FetchContent_MakeAvailable(sdl3 sdl3_image flac libpng zstd nlohmann_json)
     endif()
 
+    if(TARGET FLAC)
+        # On Android armeabi-v7a, FLAC's compat remaps can conflict with bionic stdio prototypes.
+        target_compile_definitions(FLAC PRIVATE HAVE_FSEEKO=1 HAVE_FTELLO=1)
+    endif()
+
     # Make zstd discoverable for the rest of this file (later FindHelper/pkg-config logic).
     if(TARGET libzstd_static)
         set(ZSTD_FOUND TRUE)

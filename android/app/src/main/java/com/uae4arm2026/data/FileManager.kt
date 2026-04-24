@@ -1,5 +1,6 @@
 package com.uae4arm2026.data
 
+import android.content.Intent
 import android.content.Context
 import android.net.Uri
 import android.os.Environment
@@ -10,6 +11,7 @@ import androidx.documentfile.provider.DocumentFile
 import com.uae4arm2026.data.model.AmigaFile
 import com.uae4arm2026.data.model.FileCategory
 import java.util.zip.CRC32
+import java.util.zip.ZipInputStream
 import java.io.File
 
 object FileManager {
@@ -24,17 +26,21 @@ object FileManager {
 		return File(getAppStoragePath(context), category.dirName)
 	}
 
+	fun getScannableExtensions(category: FileCategory): Set<String> {
+		return if (category == FileCategory.ROMS) category.extensions + "zip" else category.extensions
+	}
+
+	fun acceptsImportExtension(category: FileCategory, extension: String): Boolean {
+		return extension.lowercase() in getScannableExtensions(category)
+	}
+
 	fun getEffectiveCategoryDir(context: Context, category: FileCategory): File {
 		val configured = getCategoryLibraryPath(context, category)
 		if (!configured.isNullOrBlank()) {
 			val externalDir = File(configured)
-			if (externalDir.exists() && externalDir.isDirectory) {
-				detectCategoryFolders(externalDir.absolutePath)[category]?.let { detectedPath ->
-					if (!detectedPath.equals(externalDir.absolutePath, ignoreCase = true)) {
-						setCategoryLibraryPath(context, category, detectedPath)
-						return File(detectedPath)
-					}
-				}
+			// On Android 11+, exists() may return true but we still can't read it.
+			// isAppOwnedPath handles checking if we have native access.
+			if (externalDir.isDirectory) {
 				return externalDir
 			}
 		}
@@ -50,9 +56,9 @@ object FileManager {
 	fun importFile(context: Context, uri: Uri, category: FileCategory): String? {
 		resolveDocumentPath(context, uri)?.let { resolvedPath ->
 			val resolvedFile = File(resolvedPath)
-			if (resolvedFile.exists() && resolvedFile.isFile) {
+			if (resolvedFile.exists() && resolvedFile.isFile && isAppOwnedPath(context, resolvedPath)) {
 				resolvedFile.parentFile?.absolutePath?.let { setCategoryLibraryPath(context, category, it) }
-				Log.d(TAG, "Using external file in place: $resolvedPath")
+				Log.d(TAG, "Using app-owned file in place: $resolvedPath")
 				return resolvedPath
 			}
 		}
@@ -99,7 +105,12 @@ object FileManager {
 	/**
 	 * Scan a directory for files matching the given extensions.
 	 */
-	fun scanDirectory(dir: File, extensions: Set<String>, recursive: Boolean = false): List<AmigaFile> {
+	fun scanDirectory(
+		dir: File,
+		extensions: Set<String>,
+		recursive: Boolean = false,
+		forcedCategory: FileCategory? = null
+	): List<AmigaFile> {
 		if (!dir.exists() || !dir.isDirectory) return emptyList()
 
 		val category = FileCategory.entries.firstOrNull { it.dirName == dir.name }
@@ -117,8 +128,8 @@ object FileManager {
 		}
 
 		return files.map { file ->
-			val fileCategory = category ?: requestedCategory ?: FileCategory.fromExtension(file.extension) ?: FileCategory.FLOPPIES
-			val crc = if (fileCategory == FileCategory.ROMS) calculateCrc32(file) else null
+			val fileCategory = forcedCategory ?: category ?: requestedCategory ?: FileCategory.fromExtension(file.extension) ?: FileCategory.FLOPPIES
+			val crc = if (fileCategory == FileCategory.ROMS) calculateRomCrc32(file) else null
 			AmigaFile(
 				path = file.absolutePath,
 				name = file.name,
@@ -136,37 +147,126 @@ object FileManager {
 	 * Also checks the root app storage dir for matching files (users may put files there).
 	 */
 	fun scanForCategory(context: Context, category: FileCategory): List<AmigaFile> {
+		try {
+			Log.d(TAG, "Scanning for category: ${category.name}")
+			val results = mutableListOf<AmigaFile>()
+			val seenPaths = mutableSetOf<String>()
+			val extensions = getScannableExtensions(category)
+
+			// Scan the category-specific directory
+			val categoryDir = getCategoryDir(context, category)
+			Log.d(TAG, "Scanning category dir: ${categoryDir.absolutePath}")
+			for (file in scanDirectory(categoryDir, extensions, forcedCategory = category)) {
+				if (seenPaths.add(file.path)) results.add(file)
+			}
+
+			// Also scan the root app directory for matching files
+			val rootDir = File(getAppStoragePath(context))
+			Log.d(TAG, "Scanning root app dir: ${rootDir.absolutePath}")
+			for (file in scanDirectory(rootDir, extensions, forcedCategory = category)) {
+				if (seenPaths.add(file.path)) results.add(file)
+			}
+
+			// For ROMs, also check whdboot Kickstarts locations
+			if (category == FileCategory.ROMS) {
+				val kickstartDirs = listOf(
+					File(rootDir, "whdboot/game-data/Kickstarts"),
+					File(rootDir, "whdboot/save-data/Kickstarts")
+				)
+				for (dir in kickstartDirs) {
+					Log.d(TAG, "Scanning kickstart dir: ${dir.absolutePath}")
+					for (file in scanDirectory(dir, extensions, forcedCategory = category)) {
+						if (seenPaths.add(file.path)) results.add(file)
+					}
+				}
+			}
+
+			val configuredDir = getCategoryLibraryPath(context, category)
+			if (!configuredDir.isNullOrBlank()) {
+				val externalDir = File(configuredDir)
+				val uriString = getCategoryLibraryUri(context, category)
+
+				Log.d(TAG, "Scanning configured external dir: $configuredDir (URI: $uriString)")
+				if (!uriString.isNullOrBlank() && !isAppOwnedPath(context, configuredDir)) {
+					// Use SAF to scan external directory
+					for (file in scanDocumentDirectory(context, Uri.parse(uriString), extensions, category)) {
+						if (seenPaths.add(file.path)) results.add(file)
+					}
+				} else if (isAppOwnedPath(context, configuredDir)) {
+					// Traditional scan for app-owned or older Android versions
+					for (file in scanDirectory(externalDir, extensions, recursive = true, forcedCategory = category)) {
+						if (seenPaths.add(file.path)) results.add(file)
+					}
+				} else {
+					Log.w(TAG, "Skipping external scan for $configuredDir because no URI is available")
+				}
+			}
+
+			Log.d(TAG, "Found ${results.size} files for ${category.name}")
+			return results.sortedBy { it.name.lowercase() }
+		} catch (e: Exception) {
+			Log.e(TAG, "Error scanning for category ${category.name}", e)
+			return emptyList()
+		}
+	}
+
+	private fun scanDocumentDirectory(
+		context: Context,
+		treeUri: Uri,
+		extensions: Set<String>,
+		category: FileCategory
+	): List<AmigaFile> {
 		val results = mutableListOf<AmigaFile>()
-		val seenPaths = mutableSetOf<String>()
+		val resolver = context.contentResolver
+		val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
+			treeUri,
+			DocumentsContract.getTreeDocumentId(treeUri)
+		)
 
-		// Scan the category-specific directory
-		val categoryDir = getCategoryDir(context, category)
-		for (file in scanDirectory(categoryDir, category.extensions)) {
-			if (seenPaths.add(file.path)) results.add(file)
-		}
+		val projection = arrayOf(
+			DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+			DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+			DocumentsContract.Document.COLUMN_SIZE,
+			DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+			DocumentsContract.Document.COLUMN_MIME_TYPE
+		)
 
-		// Also scan the root app directory for matching files
-		val rootDir = File(getAppStoragePath(context))
-		for (file in scanDirectory(rootDir, category.extensions)) {
-			if (seenPaths.add(file.path)) results.add(file)
-		}
+		resolver.query(childrenUri, projection, null, null, null)?.use { cursor ->
+			val idIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+			val nameIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+			val sizeIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE)
+			val modIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+			val mimeIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
 
-		// For ROMs, also check whdboot/Kickstarts
-		if (category == FileCategory.ROMS) {
-			val kickstartsDir = File(rootDir, "whdboot/game-data/Kickstarts")
-			for (file in scanDirectory(kickstartsDir, category.extensions)) {
-				if (seenPaths.add(file.path)) results.add(file)
+			while (cursor.moveToNext()) {
+				val mime = cursor.getString(mimeIndex)
+				if (DocumentsContract.Document.MIME_TYPE_DIR == mime) continue
+
+				val name = cursor.getString(nameIndex) ?: "unknown"
+				val ext = name.substringAfterLast('.', "").lowercase()
+				if (ext !in extensions) continue
+
+				val docId = cursor.getString(idIndex)
+				val docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
+				
+				// Store the URI string as the path for external files.
+				// The EmulatorActivity will translate this to a /proc/self/fd/ path on launch.
+				val path = docUri.toString()
+
+				results.add(
+					AmigaFile(
+						path = path,
+						name = name,
+						extension = ext,
+						size = cursor.getLong(sizeIndex),
+						lastModified = cursor.getLong(modIndex),
+						category = category,
+						crc32 = null
+					)
+				)
 			}
 		}
-
-		getCategoryLibraryPath(context, category)?.let { configuredDir ->
-			val externalDir = File(configuredDir)
-			for (file in scanDirectory(externalDir, category.extensions, recursive = true)) {
-				if (seenPaths.add(file.path)) results.add(file)
-			}
-		}
-
-		return results.sortedBy { it.name.lowercase() }
+		return results
 	}
 
 	fun ensureDirectories(context: Context) {
@@ -190,13 +290,39 @@ object FileManager {
 		return value?.takeIf { it.isNotEmpty() }
 	}
 
-	fun setCategoryLibraryPath(context: Context, category: FileCategory, path: String?) {
+	fun setCategoryLibraryPath(context: Context, category: FileCategory, path: String?, treeUriString: String? = null) {
 		val prefs = AppStorage.openPreferences(context)
 		prefs.edit().apply {
 			val normalized = path?.trim().orEmpty()
-			if (normalized.isEmpty()) remove(getLibraryPathKey(category))
-			else putString(getLibraryPathKey(category), normalized)
+			if (normalized.isEmpty()) {
+				remove(getLibraryPathKey(category))
+				remove(getLibraryUriKey(category))
+			} else {
+				putString(getLibraryPathKey(category), normalized)
+				if (treeUriString != null) {
+					putString(getLibraryUriKey(category), treeUriString)
+				}
+			}
 		}.apply()
+	}
+
+	fun persistDirectoryAccess(context: Context, uri: Uri) {
+		if (!uri.scheme.equals("content", ignoreCase = true)) return
+		if (!DocumentsContract.isTreeUri(uri)) return
+
+		val resolver = context.contentResolver
+		try {
+			resolver.takePersistableUriPermission(
+				uri,
+				Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+			)
+		} catch (_: SecurityException) {
+			try {
+				resolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+			} catch (e: SecurityException) {
+				Log.w(TAG, "Failed to persist directory access for $uri", e)
+			}
+		}
 	}
 
 	/**
@@ -204,9 +330,13 @@ object FileManager {
 	 * Works without MANAGE_EXTERNAL_STORAGE. Returns a map of category → resolved
 	 * filesystem path. Categories whose path cannot be resolved are omitted.
 	 */
-	fun detectCategoryFolders(context: Context, treeUri: Uri): Map<FileCategory, String> {
-		val root = DocumentFile.fromTreeUri(context, treeUri) ?: return emptyMap()
-		if (!root.isDirectory) return emptyMap()
+	fun detectCategoryFolders(context: Context, treeUri: Uri): Map<FileCategory, Pair<String, Uri>> {
+		val resultDocs = mutableMapOf<FileCategory, Uri>()
+		val resolver = context.contentResolver
+		val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
+			treeUri,
+			DocumentsContract.getTreeDocumentId(treeUri)
+		)
 
 		val keywords = mapOf(
 			FileCategory.ROMS to listOf("kickstart", "kick", "rom", "roms", "bios"),
@@ -215,52 +345,46 @@ object FileManager {
 			FileCategory.CD_IMAGES to listOf("cd", "cds", "cdrom", "cdroms", "iso", "disc", "discs"),
 			FileCategory.HARD_DRIVES to listOf("hdf", "harddrive", "harddrives", "hdd")
 		)
-
-		val subdirs = root.listFiles()
-			?.filter { it.isDirectory && it.name?.startsWith(".") == false }
-			?: return emptyMap()
-
+		
 		val sortedPairs = keywords.entries
 			.flatMap { (cat, kws) -> kws.map { kw -> cat to kw } }
 			.sortedByDescending { it.second.length }
 
-		val resultDocs = mutableMapOf<FileCategory, DocumentFile>()
+		val subdirs = mutableListOf<Pair<String, Uri>>()
+
+		resolver.query(childrenUri, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_MIME_TYPE), null, null, null)?.use { cursor ->
+			val nameIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+			val idIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+			val mimeIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
+
+			while (cursor.moveToNext()) {
+				val mime = cursor.getString(mimeIndex)
+				val name = cursor.getString(nameIndex) ?: continue
+				if (DocumentsContract.Document.MIME_TYPE_DIR == mime) {
+					if (!name.startsWith(".")) {
+						val docId = cursor.getString(idIndex)
+						subdirs.add(name to DocumentsContract.buildDocumentUriUsingTree(treeUri, docId))
+					}
+				}
+			}
+		}
 
 		// Pass 1: name-based matching
-		for (dir in subdirs) {
-			val nameLower = dir.name?.lowercase() ?: continue
+		for ((name, docUri) in subdirs) {
+			val nameLower = name.lowercase()
 			val nameNorm = nameLower.replace(Regex("[-_ ]+"), "")
 			for ((category, kw) in sortedPairs) {
 				if (category !in resultDocs && (nameLower.contains(kw) || nameNorm.contains(kw))) {
-					resultDocs[category] = dir
+					resultDocs[category] = docUri
 					break
 				}
 			}
 		}
 
-		// Pass 2: extension-based detection for unmatched categories
-		for (dir in subdirs) {
-			val files = dir.listFiles()?.filter { it.isFile } ?: continue
-			for ((category, _) in keywords) {
-				if (category in resultDocs) continue
-				if (files.any { f -> f.name?.substringAfterLast('.', "")?.lowercase() in category.extensions }) {
-					resultDocs[category] = dir
-				}
-			}
-		}
-
-		// Also check root itself for kickstarts
-		if (FileCategory.ROMS !in resultDocs) {
-			val rootFiles = root.listFiles()?.filter { it.isFile } ?: emptyList()
-			if (rootFiles.any { f -> f.name?.substringAfterLast('.', "")?.lowercase() in FileCategory.ROMS.extensions }) {
-				resultDocs[FileCategory.ROMS] = root
-			}
-		}
-
-		// Resolve DocumentFiles to filesystem paths via content URI
-		return resultDocs.mapNotNull { (category, docFile) ->
-			val path = resolveDocumentPath(context, docFile.uri)
-			if (path != null) category to path else null
+		// Resolve Uris to filesystem paths
+		return resultDocs.mapNotNull { (category, docUri) ->
+			val path = resolveDocumentPath(context, docUri)
+			if (path != null) category to (path to docUri) else null
 		}.toMap()
 	}
 
@@ -335,7 +459,10 @@ object FileManager {
 
 	fun isAppOwnedPath(context: Context, path: String): Boolean {
 		val appRoot = getAppStoragePath(context).trim()
-		return appRoot.isNotEmpty() && path.startsWith(appRoot, ignoreCase = true)
+		if (appRoot.isEmpty()) return false
+		// Also treat /proc/self/fd/ as app-owned (virtual)
+		if (path.startsWith("/proc/self/fd/", ignoreCase = true)) return true
+		return path.startsWith(appRoot, ignoreCase = true)
 	}
 
 	private fun getFileName(context: Context, uri: Uri): String? {
@@ -351,7 +478,20 @@ object FileManager {
 		return uri.lastPathSegment?.substringAfterLast('/')
 	}
 
+	fun getCategoryLibraryUri(context: Context, category: FileCategory): String? {
+		return AppStorage.openPreferences(context)
+			.getString(getLibraryUriKey(category), null)
+	}
+
+	fun setCategoryLibraryUri(context: Context, category: FileCategory, uri: String?) {
+		AppStorage.openPreferences(context).edit().apply {
+			if (uri.isNullOrBlank()) remove(getLibraryUriKey(category))
+			else putString(getLibraryUriKey(category), uri)
+		}.apply()
+	}
+
 	private fun getLibraryPathKey(category: FileCategory): String = "library_path_${category.dirName}"
+	private fun getLibraryUriKey(category: FileCategory): String = "library_uri_${category.dirName}"
 
 	private fun resolveDocumentPath(context: Context, uri: Uri): String? {
 		if (uri.scheme.equals("file", ignoreCase = true)) {
@@ -390,6 +530,50 @@ object FileManager {
 		}
 	}
 
+	private fun calculateRomCrc32(file: File): Long? {
+		return if (file.extension.equals("zip", ignoreCase = true)) {
+			calculateZipEntryCrc32(file, FileCategory.ROMS.extensions)
+		} else {
+			calculateCrc32(file)
+		}
+	}
+
+	private fun calculateZipEntryCrc32(file: File, allowedExtensions: Set<String>): Long? {
+		return try {
+			var entryCount = 0
+			var matchedCrc: Long? = null
+
+			ZipInputStream(file.inputStream().buffered()).use { zip ->
+				while (true) {
+					val entry = zip.nextEntry ?: break
+					if (entry.isDirectory) continue
+
+					val ext = entry.name.substringAfterLast('.', "").lowercase()
+					if (ext !in allowedExtensions) continue
+
+					entryCount++
+					if (entryCount > 1) {
+						return null
+					}
+
+					val crc = CRC32()
+					val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+					while (true) {
+						val read = zip.read(buffer)
+						if (read <= 0) break
+						crc.update(buffer, 0, read)
+					}
+					matchedCrc = crc.value and 0xffffffffL
+				}
+			}
+
+			matchedCrc
+		} catch (e: Exception) {
+			Log.w(TAG, "Failed to calculate ROM CRC32 inside zip ${file.absolutePath}", e)
+			null
+		}
+	}
+
 	private fun calculateCrc32(file: File): Long? {
 		return try {
 			val crc = CRC32()
@@ -406,6 +590,71 @@ object FileManager {
 			Log.w(TAG, "Failed to calculate CRC32 for ${file.absolutePath}", e)
 			null
 		}
+	}
+
+	fun findContentUriForPath(context: Context, path: String): Uri? {
+		if (path.isBlank() || path.startsWith("content://") || path.startsWith("/proc/")) return null
+
+		// Find which granted tree this path belongs to.
+		// We check all configured library paths as they represent granted SAF trees.
+		var bestMatchCategory: FileCategory? = null
+		var bestMatchLength = -1
+
+		FileCategory.entries.forEach { category ->
+			val libPath = getCategoryLibraryPath(context, category) ?: return@forEach
+			val treeUriString = getCategoryLibraryUri(context, category) ?: return@forEach
+
+			if (path.startsWith(libPath, ignoreCase = true)) {
+				if (libPath.length > bestMatchLength) {
+					bestMatchLength = libPath.length
+					bestMatchCategory = category
+				}
+			}
+		}
+
+		if (bestMatchCategory != null) {
+			val category = bestMatchCategory!!
+			val libPath = getCategoryLibraryPath(context, category)!!
+			val treeUriString = getCategoryLibraryUri(context, category)!!
+			
+			val treeUri = Uri.parse(treeUriString)
+			val rootId = DocumentsContract.getTreeDocumentId(treeUri)
+			
+			// Relative path from library root
+			val libFile = File(libPath)
+			val targetFile = File(path)
+			val libAbs = libFile.absolutePath
+			val targetAbs = targetFile.absolutePath
+			
+			val relativePath = if (libAbs.equals(targetAbs, ignoreCase = true)) "" 
+							   else if (targetAbs.startsWith(libAbs, ignoreCase = true) && targetAbs.length > libAbs.length)
+								   targetAbs.substring(libAbs.length).removePrefix("/").removePrefix("\\")
+							   else null
+
+			if (relativePath == null) return null
+			if (relativePath.isEmpty()) return treeUri
+
+			// Build the document URI directly from the relative path if possible.
+			if (treeUri.authority == "com.android.externalstorage.documents") {
+				val parts = rootId.split(":")
+				if (parts.size >= 2) {
+					val newId = "${parts[0]}:${parts[1]}/$relativePath"
+					return DocumentsContract.buildDocumentUriUsingTree(treeUri, newId)
+				}
+			}
+
+			// Fallback to searching (slow, but works for all providers)
+			val root = DocumentFile.fromTreeUri(context, treeUri) ?: return null
+			var current: DocumentFile? = root
+			val parts = relativePath.split(File.separator, "/")
+			for (part in parts) {
+				if (part.isEmpty()) continue
+				current = current?.findFile(part)
+				if (current == null) break
+			}
+			if (current != null) return current.uri
+		}
+		return null
 	}
 }
 

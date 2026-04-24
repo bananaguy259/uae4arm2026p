@@ -58,7 +58,18 @@ object ConfigGenerator {
 			sb.appendLine("z3mem_size=${settings.z3Ram}")
 		}
 
-		// ROM
+		// RTG
+		if (settings.useRtg) {
+			sb.appendLine("gfxcard_type=ZorroIII")
+			sb.appendLine("gfxcard_size=16") // Use 16MB VRAM for RTG
+			sb.appendLine("rtg_nocustom=true")
+			sb.appendLine("rtg_noautomodes=false")
+			sb.appendLine("gfx_fullscreen_picasso=fullwindow")
+		} else {
+			sb.appendLine("gfxcard_size=0")
+		}
+
+		// Kickstart ROM
 		if (settings.romFile.isNotEmpty()) {
 			sb.appendLine("kickstart_rom_file=${settings.romFile}")
 		}
@@ -75,15 +86,38 @@ object ConfigGenerator {
 		sb.appendLine("floppy2type=${settings.floppy2Type}")
 		sb.appendLine("floppy3=${settings.floppy3}")
 		sb.appendLine("floppy3type=${settings.floppy3Type}")
+		sb.appendLine("nr_floppies=${if (settings.floppy3Type != -1) 4 else if (settings.floppy2Type != -1) 3 else if (settings.floppy1Type != -1) 2 else 1}")
 
 		// CD
 		if (settings.cdImage.isNotEmpty()) {
 			sb.appendLine("cdimage0=${settings.cdImage}")
 		}
+
 		// Hard drives
+		var physicalUnit = 0
+		var bootPriSet = false
 		settings.hardDrives.forEachIndexed { i, path ->
 			if (path.isNotEmpty()) {
-				sb.appendLine("hardfile2=rw,DH$i:\"$path\",32,1,2,512,0")
+				val file = File(path)
+				val isDir = file.isDirectory
+				// Only first non-empty drive is bootable (priority 0)
+				val bootPri = if (!bootPriSet) 0 else -128
+				bootPriSet = true
+
+				if (isDir) {
+					// Directory drive — use the robust filesystem2 format
+					sb.appendLine("filesystem2=rw,DH$i:${file.name.ifBlank { "DH$i" }}:\"$path\",$bootPri")
+				} else {
+					// HDF drive — use the robust uaehfX format that supports geometry auto-detect
+					sb.appendLine("uaehf$physicalUnit=hdf,rw,DH$i:\"$path\",0,0,0,512,$bootPri")
+					sb.appendLine("uaehf${physicalUnit}_file=$path")
+					sb.appendLine("uaehf${physicalUnit}_name=DH$i")
+					sb.appendLine("uaehf${physicalUnit}_bootpri=$bootPri")
+					sb.appendLine("uaehf${physicalUnit}_present=true")
+					sb.appendLine("uaehf${physicalUnit}_blocksize=512")
+					sb.appendLine("uaehf${physicalUnit}_readonly=false")
+				}
+				physicalUnit++
 			}
 		}
 
@@ -94,6 +128,9 @@ object ConfigGenerator {
 		sb.appendLine("sound_stereo_separation=${settings.soundStereoSeparation}")
 		sb.appendLine("sound_interpol=${settings.soundInterpolation}")
 
+		// Misc
+		sb.appendLine("bsdsocket_emu=true")
+
 		// Display
 		val activeWidth = if (settings.useRtg) settings.rtgWidth else settings.gfxWidth
 		val activeHeight = if (settings.useRtg) settings.rtgHeight else settings.gfxHeight
@@ -103,13 +140,6 @@ object ConfigGenerator {
 		sb.appendLine("gfx_correct_aspect=${settings.correctAspect.toCfg()}")
 		sb.appendLine("gfx_auto_crop=${settings.autoCrop.toCfg()}")
 		sb.appendLine("show_leds=${settings.showLeds.toCfg()}")
-		if (settings.useRtg) {
-			sb.appendLine("gfxcard_type=ZorroIII")
-			sb.appendLine("gfxcard_size=8")
-			sb.appendLine("gfx_fullscreen_picasso=fullwindow")
-		} else {
-			sb.appendLine("gfxcard_size=0")
-		}
 
 		// Input
 		sb.appendLine("joyport0=${settings.joyport0}")
@@ -156,4 +186,3 @@ object ConfigGenerator {
 
 	private fun Boolean.toCfg(): String = if (this) "true" else "false"
 }
-

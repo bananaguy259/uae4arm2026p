@@ -32,8 +32,11 @@ import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Eject
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenuItem
@@ -51,6 +54,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -173,6 +177,73 @@ private fun treeUriToPath(uri: Uri): String? = try {
 
 private enum class PlayMode { FLOPPY, HDF, WHDLOAD }
 
+private data class LaunchValidationAction(
+    val label: String,
+    val route: String
+)
+
+private data class LaunchValidationPrompt(
+    val title: String,
+    val message: String,
+    val primaryAction: LaunchValidationAction? = null,
+    val secondaryAction: LaunchValidationAction? = null
+)
+
+private fun buildLaunchValidationPrompt(
+    settings: EmulatorSettings,
+    playMode: PlayMode,
+    isCdConsoleModel: Boolean,
+    selectedWhd: AmigaFile?,
+    isAgsMountedInHdfTab: Boolean
+): LaunchValidationPrompt? {
+    val hasKickstart = settings.romFile.isNotBlank()
+    val hasMedia = when {
+        isCdConsoleModel -> settings.cdImage.isNotBlank()
+        playMode == PlayMode.WHDLOAD -> selectedWhd != null
+        playMode == PlayMode.HDF -> isAgsMountedInHdfTab || settings.hardDrives.any { it.isNotBlank() }
+        else -> listOf(settings.floppy0, settings.floppy1, settings.floppy2, settings.floppy3).any { it.isNotBlank() }
+    }
+
+    if (hasKickstart && hasMedia) return null
+
+    val missingItems = buildList {
+        if (!hasKickstart) add("a Kickstart ROM")
+        if (!hasMedia) {
+            add(
+                when {
+                    isCdConsoleModel -> "a CD image"
+                    playMode == PlayMode.WHDLOAD -> "a WHDLoad game"
+                    playMode == PlayMode.HDF -> "a hard drive image or mounted AGS install"
+                    else -> "a floppy disk image"
+                }
+            )
+        }
+    }
+
+    val message = when (missingItems.size) {
+        1 -> "Select ${missingItems.first()} before launching the emulator."
+        2 -> "Select ${missingItems[0]} and ${missingItems[1]} before launching the emulator."
+        else -> "Select the required launch files before launching the emulator."
+    }
+
+    val primaryAction = when {
+        !hasKickstart -> LaunchValidationAction("Open Downloads", Screen.FileManagerDownloads.route)
+        !hasMedia -> LaunchValidationAction("Open Files", Screen.FileManager.route)
+        else -> null
+    }
+    val secondaryAction = when {
+        !hasKickstart && !hasMedia -> LaunchValidationAction("Open Files", Screen.FileManager.route)
+        else -> null
+    }
+
+    return LaunchValidationPrompt(
+        title = "Finish Setup",
+        message = message,
+        primaryAction = primaryAction,
+        secondaryAction = secondaryAction
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun Uae4ArmHomeScreen(
@@ -190,10 +261,8 @@ fun Uae4ArmHomeScreen(
     val model    = settings.baseModel
     val isCdConsoleModel = model == AmigaModel.CD32 || model == AmigaModel.CDTV
 
-    val roms         by viewModel.availableRoms.collectAsState()
     val selectedWhd  = viewModel.selectedWhdload
     val isScanning   by FileRepository.getInstance(context).isScanning.collectAsState()
-    val canStart     = settings.romFile.isNotBlank() || roms.isNotEmpty()
 
     // ── SAF file picker ───────────────────────────────────────────────────
     var pendingFileCategory by remember { mutableStateOf(FileCategory.FLOPPIES) }
@@ -214,12 +283,20 @@ fun Uae4ArmHomeScreen(
     }
 
     // ── SAF directory picker ──────────────────────────────────────────────
-    var pendingDirPickerCallback by remember { mutableStateOf<((String) -> Unit)?>(null) }
+    var pendingDirPickerCategory by remember { mutableStateOf<FileCategory?>(null) }
+    var pendingDirPickerCallback by remember { mutableStateOf<((String, Uri) -> Unit)?>(null) }
     val dirPickerLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
-        uri?.let { treeUriToPath(it)?.let { path -> pendingDirPickerCallback?.invoke(path) } }
+        val callback = pendingDirPickerCallback
+        val category = pendingDirPickerCategory
+        if (uri != null && callback != null) {
+            treeUriToPath(uri)?.let { path ->
+                callback(path, uri)
+            }
+        }
         pendingDirPickerCallback = null
+        pendingDirPickerCategory = null
     }
 
     fun openFilePicker(category: FileCategory, @Suppress("UNUSED_PARAMETER") extensions: List<String>, onPicked: (String) -> Unit) {
@@ -238,7 +315,8 @@ fun Uae4ArmHomeScreen(
         filePickerLauncher.launch(intent)
     }
 
-    fun openPicker(category: FileCategory, onPicked: (String) -> Unit) {
+    fun openPicker(category: FileCategory, onPicked: (String, Uri) -> Unit) {
+        pendingDirPickerCategory = category
         pendingDirPickerCallback = onPicked
         val dir = FileManager.getEffectiveCategoryDir(context, category)
         val initialUri = if (dir.exists()) pathToInitialUri(dir.absolutePath) else null
@@ -251,6 +329,53 @@ fun Uae4ArmHomeScreen(
     var agsBusy by remember { mutableStateOf(false) }
     var agsStatusText by remember { mutableStateOf<String?>(null) }
     var agsNeedsBrowse by remember { mutableStateOf(false) }
+    var launchValidationPrompt by remember { mutableStateOf<LaunchValidationPrompt?>(null) }
+    var hdfSlotToPick by remember { mutableStateOf<Int?>(null) }
+
+    if (hdfSlotToPick != null) {
+        val slotIdx = hdfSlotToPick!!
+        AlertDialog(
+            onDismissRequest = { hdfSlotToPick = null },
+            title = { Text("Hard Drive DH$slotIdx") },
+            text = { Text("Would you like to mount a Hardfile (.hdf) or a Folder from your storage?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    hdfSlotToPick = null
+                    openFilePicker(FileCategory.HARD_DRIVES, listOf("hdf", "hdi", "vhd")) { picked ->
+                        settingsViewModel.updateSettings { s ->
+                            val updated = s.hardDrives.toMutableList()
+                            if (slotIdx >= updated.size) {
+                                while (updated.size <= slotIdx) updated.add("")
+                            }
+                            updated[slotIdx] = picked
+                            s.copy(hardDrives = updated)
+                        }
+                    }
+                }) {
+                    Text("Pick File")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    hdfSlotToPick = null
+                    openPicker(FileCategory.HARD_DRIVES) { pickedPath, uri ->
+                        FileManager.persistDirectoryAccess(context, uri)
+                        settingsViewModel.updateSettings { s ->
+                            val updated = s.hardDrives.toMutableList()
+                            if (slotIdx >= updated.size) {
+                                while (updated.size <= slotIdx) updated.add("")
+                            }
+                            updated[slotIdx] = pickedPath
+                            s.copy(hardDrives = updated)
+                        }
+                    }
+                }) {
+                    Text("Mount Folder")
+                }
+            }
+        )
+    }
+
     LaunchedEffect(settings.hardDrives) {
         val found = withContext(Dispatchers.IO) {
             AgsDetector.detect(context) ?: AgsDetector.detectFromMountedDrives(settings.hardDrives)
@@ -261,7 +386,9 @@ fun Uae4ArmHomeScreen(
     var playMode by remember(isCdConsoleModel) {
         mutableStateOf(if (isCdConsoleModel) PlayMode.WHDLOAD else PlayMode.FLOPPY)
     }
-    val agsMountedPaths = agsInstall?.let { AgsDetector.mountableHardDrives(it) }
+    val agsMountedPaths by remember(agsInstall) {
+        derivedStateOf { agsInstall?.let { AgsDetector.mountableHardDrives(it) } }
+    }
     val isAgsMountedInHdfTab = playMode == PlayMode.HDF &&
         agsInstall != null &&
         agsMountedPaths != null &&
@@ -276,6 +403,49 @@ fun Uae4ArmHomeScreen(
         agsNeedsBrowse = true
         agsStatusText = "AGS reset. Tap Browse to choose the folder again"
         agsDismissed = true
+    }
+
+    // ── Mount AGS logic ───────────────────────────────────────────────────
+    val mountInstall: (AgsDetector.AgsInstall?) -> Unit = { install ->
+        scope.launch {
+            try {
+                agsBusy = true
+                agsStatusText = null
+                agsInstall = install
+                if (install != null) {
+                    val drives = withContext(Dispatchers.IO) {
+                        AgsDetector.mountableHardDrives(install)
+                    }
+
+                    settingsViewModel.applyModel(AmigaModel.A1200)
+                    settingsViewModel.updateSettings { s ->
+                        s.copy(
+                            address24Bit = false,
+                            cpuSpeed = "max",
+                            cycleExact = false,
+                            fpuModel = 68882,
+                            jitCacheSize = 16384,
+                            z3Ram = 512,
+                            useRtg = true,
+                            romFile = install.romFile ?: s.romFile,
+                            hardDrives = drives
+                        )
+                    }
+                    val sharedMounted = drives.size > 10 && drives[10].isNotBlank()
+                    agsStatusText = if (sharedMounted)
+                        "Mounted AGS drives + SHARED (DH10)"
+                    else
+                        "Mounted ${drives.filter { it.isNotBlank() }.size} AGS hard drives"
+                } else {
+                    agsStatusText = "Selected folder is not a valid AGS_UAE install"
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("Uae4Arm-AGS", "Failed to mount AGS", e)
+                agsStatusText = "Error: ${e.localizedMessage}"
+            } finally {
+                agsBusy = false
+            }
+        }
     }
 
     fun resetAllMedia() {
@@ -302,6 +472,45 @@ fun Uae4ArmHomeScreen(
             .fillMaxSize()
             .background(BgScreen)
     ) {
+        launchValidationPrompt?.let { prompt ->
+            AlertDialog(
+                onDismissRequest = { launchValidationPrompt = null },
+                title = { Text(prompt.title) },
+                text = { Text(prompt.message) },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            launchValidationPrompt = null
+                            prompt.primaryAction?.let { action ->
+                                navController?.navigate(action.route)
+                            }
+                        }
+                    ) {
+                        Text(prompt.primaryAction?.label ?: "OK")
+                    }
+                },
+                dismissButton = {
+                    if (prompt.secondaryAction != null) {
+                        TextButton(
+                            onClick = {
+                                val action = prompt.secondaryAction
+                                launchValidationPrompt = null
+                                if (action != null) {
+                                    navController?.navigate(action.route)
+                                }
+                            }
+                        ) {
+                            Text(prompt.secondaryAction.label)
+                        }
+                    } else {
+                        TextButton(onClick = { launchValidationPrompt = null }) {
+                            Text("Close")
+                        }
+                    }
+                }
+            )
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -333,15 +542,12 @@ fun Uae4ArmHomeScreen(
 
             // ── Kickstart row ─────────────────────────────────────────
             KickstartRow(
-                settings      = settings,
+                settings = settings,
                 onPickRomFile = {
-                    openFilePicker(FileCategory.ROMS, listOf("rom", "bin", "kick")) { path ->
+                    openFilePicker(FileCategory.ROMS, listOf("rom", "bin", "kick", "zip")) { path ->
                         settingsViewModel.updateSettings { s -> s.copy(romFile = path) }
                     }
-                },
-                onOpenConfigs        = { navController?.navigate(Screen.Configurations.route) },
-                onOpenSettings       = { navController?.navigate(Screen.Settings.route) },
-                onRerunWalkthrough   = { navController?.navigate(Screen.Onboarding.route) }
+                }
             )
 
             // ── Model area ────────────────────────────────────────────
@@ -482,68 +688,39 @@ fun Uae4ArmHomeScreen(
                                                     s.copy(hardDrives = updated)
                                                 }
                                             },
-                                            onPickFile = {
-                                                openFilePicker(FileCategory.HARD_DRIVES, listOf("hdf", "hdi", "vhd")) { picked ->
-                                                    settingsViewModel.updateSettings { s ->
-                                                        val updated = s.hardDrives.toMutableList().apply { this[i] = picked }
-                                                        s.copy(hardDrives = updated)
-                                                    }
-                                                }
-                                            }
+                                            onPickFile = { hdfSlotToPick = i }
                                         )
                                     }
                                     if (settings.hardDrives.size < 10) AddDriveCard {
-                                        settingsViewModel.updateSettings { s -> s.copy(hardDrives = s.hardDrives + "") }
+                                        hdfSlotToPick = settings.hardDrives.size
                                     }
                                     AgsDriveCard(
                                         detected = agsInstall != null,
                                         busy = agsBusy,
                                         onMount = {
-                                            val mountInstall: (AgsDetector.AgsInstall?) -> Unit = { install ->
-                                                scope.launch {
-                                                    agsBusy = true
-                                                    agsStatusText = null
-                                                    agsInstall = install
-                                                    if (install != null) {
-                                                        val drives = AgsDetector.mountableHardDrives(install).ifEmpty { listOf("") }
-                                                        settingsViewModel.applyModel(AmigaModel.A1200)
-                                                        settingsViewModel.updateSettings { s ->
-                                                            s.copy(
-                                                                address24Bit = false,
-                                                                cpuSpeed = "max",
-                                                                cycleExact = false,
-                                                                fpuModel = 68882,
-                                                                jitCacheSize = 16384,
-                                                                z3Ram = 512,
-                                                                useRtg = true,
-                                                                romFile = install.romFile ?: s.romFile,
-                                                                hardDrives = drives
-                                                            )
-                                                        }
-                                                        agsStatusText = "Mounted ${drives.size} AGS hard drives"
-                                                    } else {
-                                                        agsStatusText = "Selected folder is not a valid AGS_UAE install"
-                                                    }
-                                                    agsBusy = false
-                                                }
-                                            }
-
                                             if (agsInstall != null && !agsNeedsBrowse) {
                                                 mountInstall(agsInstall)
                                             } else {
-                                                openPicker(FileCategory.HARD_DRIVES) { pickedPath ->
+                                                openPicker(FileCategory.HARD_DRIVES) { pickedPath, uri ->
+                                                    FileManager.persistDirectoryAccess(context, uri)
+                                                    FileManager.setCategoryLibraryPath(context, FileCategory.HARD_DRIVES, pickedPath, uri.toString())
                                                     scope.launch {
-                                                        agsBusy = true
-                                                        agsStatusText = "Checking $pickedPath"
-                                                        val install = withContext(Dispatchers.IO) {
-                                                            AgsDetector.detectFromPath(pickedPath)
+                                                        try {
+                                                            agsBusy = true
+                                                            agsStatusText = "Checking $pickedPath"
+                                                            val install = withContext(Dispatchers.IO) {
+                                                                AgsDetector.detectFromPath(pickedPath)
+                                                            }
+                                                            if (install != null) {
+                                                                agsNeedsBrowse = false
+                                                                agsDismissed = false
+                                                            }
+                                                            mountInstall(install)
+                                                        } catch (e: Exception) {
+                                                            agsStatusText = "Error: ${e.localizedMessage}"
+                                                        } finally {
+                                                            agsBusy = false
                                                         }
-                                                        agsBusy = false
-                                                        if (install != null) {
-                                                            agsNeedsBrowse = false
-                                                            agsDismissed = false
-                                                        }
-                                                        mountInstall(install)
                                                     }
                                                 }
                                             }
@@ -626,19 +803,34 @@ fun Uae4ArmHomeScreen(
             }
 
             // ── START always at bottom ───────────────────────────────
-            val startEnabled = if (isCdConsoleModel) {
-                canStart
-            } else {
-                when (playMode) {
-                    PlayMode.FLOPPY  -> canStart
-                    PlayMode.HDF     -> canStart && settings.hardDrives.any { it.isNotBlank() }
-                    PlayMode.WHDLOAD -> selectedWhd != null
-                }
-            }
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
+                Button(
+                    onClick = { navController?.navigate(Screen.FileManager.route) },
+                    colors = ButtonDefaults.buttonColors(containerColor = BtnGrey),
+                    modifier = Modifier.height(52.dp)
+                ) {
+                    Icon(
+                        Icons.Default.FolderOpen,
+                        contentDescription = "Open File Manager",
+                        tint = TextPrimary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                Button(
+                    onClick = { navController?.navigate(Screen.Settings.route) },
+                    colors = ButtonDefaults.buttonColors(containerColor = BtnGrey),
+                    modifier = Modifier.height(52.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Settings,
+                        contentDescription = "Open Settings",
+                        tint = TextPrimary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
                 Button(
                     onClick = { resetAllMedia() },
                     colors = ButtonDefaults.buttonColors(containerColor = BtnGrey),
@@ -648,6 +840,18 @@ fun Uae4ArmHomeScreen(
                 }
                 Button(
                     onClick = {
+                        val validationPrompt = buildLaunchValidationPrompt(
+                            settings = settings,
+                            playMode = playMode,
+                            isCdConsoleModel = isCdConsoleModel,
+                            selectedWhd = selectedWhd,
+                            isAgsMountedInHdfTab = isAgsMountedInHdfTab
+                        )
+                        if (validationPrompt != null) {
+                            launchValidationPrompt = validationPrompt
+                            return@Button
+                        }
+
                         if (isCdConsoleModel) {
                             EmulatorLauncher.launchWithArgs(context, settingsViewModel.generateLaunchArgs())
                         } else {
@@ -673,7 +877,6 @@ fun Uae4ArmHomeScreen(
                             }
                         }
                     },
-                    enabled  = startEnabled,
                     colors   = ButtonDefaults.buttonColors(containerColor = BtnGreenStart),
                     modifier = Modifier.weight(1f).height(52.dp)
                 ) {
@@ -691,10 +894,7 @@ fun Uae4ArmHomeScreen(
 @Composable
 private fun KickstartRow(
     settings: EmulatorSettings,
-    onPickRomFile: () -> Unit,
-    onOpenConfigs: () -> Unit,
-    onOpenSettings: () -> Unit,
-    onRerunWalkthrough: () -> Unit
+    onPickRomFile: () -> Unit
 ) {
     SectionBox(
         bgColor     = BgKick,
@@ -709,7 +909,10 @@ private fun KickstartRow(
                 painter            = painterResource(R.drawable.featured_kickstart_check),
                 contentDescription = "Kickstart",
                 contentScale       = ContentScale.Fit,
-                modifier           = Modifier.size(44.dp).clip(RoundedCornerShape(4.dp))
+                modifier           = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .clickable(onClick = onPickRomFile)
             )
             Spacer(Modifier.width(8.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -721,41 +924,6 @@ private fun KickstartRow(
                     color    = if (settings.romFile.isNotBlank()) TextPrimary else TextOrange,
                     fontSize = 11.sp,
                     maxLines = 2
-                )
-            }
-            TextButton(onClick = onPickRomFile, contentPadding = PaddingValues(horizontal = 6.dp)) {
-                Text("ROM", fontSize = 10.sp, color = TextSecondary)
-            }
-            Button(
-                onClick          = onOpenConfigs,
-                colors           = ButtonDefaults.buttonColors(containerColor = BtnGrey),
-                modifier         = Modifier.height(34.dp),
-                contentPadding   = PaddingValues(horizontal = 10.dp)
-            ) {
-                Text("Configs", fontSize = 11.sp, color = TextPrimary)
-            }
-            Spacer(Modifier.width(4.dp))
-            Button(
-                onClick          = onOpenSettings,
-                colors           = ButtonDefaults.buttonColors(containerColor = BtnGrey),
-                modifier         = Modifier.height(34.dp),
-                contentPadding   = PaddingValues(horizontal = 10.dp)
-            ) {
-                Icon(Icons.Default.Settings, contentDescription = null,
-                    tint = TextPrimary, modifier = Modifier.size(14.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("Settings", fontSize = 11.sp, color = TextPrimary)
-            }
-            Spacer(Modifier.width(4.dp))
-            IconButton(
-                onClick  = onRerunWalkthrough,
-                modifier = Modifier.size(34.dp)
-            ) {
-                Icon(
-                    Icons.Default.Replay,
-                    contentDescription = "Run setup wizard",
-                    tint     = TextSecondary,
-                    modifier = Modifier.size(18.dp)
                 )
             }
         }
@@ -1014,11 +1182,12 @@ private fun DriveIconCard(
     @DrawableRes driveArt: Int,
     currentPath: String,
     onEject: () -> Unit,
-    onPickFile: () -> Unit,
+    onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val fileName = currentPath.substringAfterLast('/').ifBlank { "" }
     val hasFile  = currentPath.isNotBlank()
+    val isDir = hasFile && !currentPath.startsWith("content://") && try { java.io.File(currentPath).isDirectory } catch(_: Exception) { false }
 
     Box(modifier = modifier.width(80.dp)) {
         Column(
@@ -1027,15 +1196,32 @@ private fun DriveIconCard(
                 .fillMaxWidth()
                 .border(1.dp, if (hasFile) BorderKick else Color(0x22FFFFFF), RoundedCornerShape(8.dp))
                 .background(if (hasFile) BgKick else Color(0x0AFFFFFF), RoundedCornerShape(8.dp))
-                .clickable(onClick = onPickFile)
+                .clickable(onClick = onClick)
                 .padding(6.dp)
         ) {
-            Image(
-                painter            = painterResource(driveArt),
-                contentDescription = label,
-                contentScale       = ContentScale.Fit,
-                modifier           = Modifier.size(56.dp, 42.dp)
-            )
+            Box(modifier = Modifier.size(56.dp, 42.dp), contentAlignment = Alignment.Center) {
+                Image(
+                    painter            = painterResource(driveArt),
+                    contentDescription = label,
+                    contentScale       = ContentScale.Fit,
+                    modifier           = Modifier.fillMaxSize()
+                )
+                if (isDir) {
+                    Icon(
+                        Icons.Default.Folder,
+                        contentDescription = "Folder",
+                        tint = GreenAccent.copy(alpha = 0.9f),
+                        modifier = Modifier.size(20.dp).align(Alignment.BottomEnd).padding(bottom = 2.dp, end = 2.dp)
+                    )
+                } else if (!hasFile) {
+                    Icon(
+                        Icons.Default.Add,
+                        contentDescription = "Empty",
+                        tint = TextSecondary.copy(alpha = 0.3f),
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+            }
             Spacer(Modifier.height(4.dp))
             Text(
                 text  = label,

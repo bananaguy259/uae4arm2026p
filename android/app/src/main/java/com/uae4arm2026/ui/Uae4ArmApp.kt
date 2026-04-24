@@ -4,7 +4,6 @@ import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -95,6 +94,8 @@ private fun Uae4ArmNavHost(navController: NavHostController, modifier: Modifier 
 		navController = navController,
 		startDestination = startDestination,
 		modifier = modifier
+			.fillMaxSize()
+			.focusGroup()
 	) {
 		composable(Screen.Setup.route) {
 			SetupWizardScreen(navController = navController)
@@ -113,6 +114,9 @@ private fun Uae4ArmNavHost(navController: NavHostController, modifier: Modifier 
 		}
 		composable(Screen.FileManager.route) {
 			FileManagerScreen()
+		}
+		composable(Screen.FileManagerDownloads.route) {
+			FileManagerScreen(initialSection = 1, showSectionTabs = false, showTopBar = false)
 		}
 		composable(Screen.Configurations.route) {
 			ConfigurationsScreen(navController = navController)

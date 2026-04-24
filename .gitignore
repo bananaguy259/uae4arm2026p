@@ -163,3 +163,7 @@ android/local.properties
 build-debug
 .cache
 .sisyphus/
+.gradle-local/
+android/*.png
+android/*.txt
+!android/AGENTS.md

@@ -83,6 +83,10 @@ private fun uriToFilePath(uri: Uri): String? = try {
 	docIdToPath(DocumentsContract.getDocumentId(uri))
 } catch (_: Exception) { null }
 
+private fun treeUriToPath(uri: Uri): String? = try {
+	docIdToPath(DocumentsContract.getTreeDocumentId(uri))
+} catch (_: Exception) { null }
+
 // ── StorageTab ────────────────────────────────────────────────────────────────
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -98,118 +102,193 @@ fun StorageTab(viewModel: SettingsViewModel) {
 		settings.baseModel == com.uae4arm2026.data.model.AmigaModel.CDTV ||
 		settings.romExtFile.isNotBlank()
 
+	// Folder picker for category directories
+	var pendingCategoryFolderPicker by remember { mutableStateOf<FileCategory?>(null) }
+	var pendingDirPickerCallback by remember { mutableStateOf<((String, Uri) -> Unit)?>(null) }
+	val folderPickerLauncher = rememberLauncherForActivityResult(
+		ActivityResultContracts.OpenDocumentTree()
+	) { uri ->
+		val category = pendingCategoryFolderPicker
+		val callback = pendingDirPickerCallback
+		if (uri != null) {
+			if (callback != null) {
+				treeUriToPath(uri)?.let { path -> callback(path, uri) }
+			} else if (category != null) {
+				FileManager.persistDirectoryAccess(context, uri)
+				treeUriToPath(uri)?.let { path ->
+					FileManager.setCategoryLibraryPath(context, category, path, uri.toString())
+					viewModel.rescan()
+				}
+			}
+		}
+		pendingCategoryFolderPicker = null
+		pendingDirPickerCallback = null
+	}
+
 	SettingsTabContent {
 		SettingsAdaptiveColumns(
 			left = {
 				OutlinedCard(modifier = Modifier.fillMaxWidth()) {
-			Column(modifier = Modifier.padding(16.dp)) {
-				Row(verticalAlignment = Alignment.CenterVertically) {
-					Icon(Icons.Default.Memory, contentDescription = null, modifier = Modifier.size(20.dp))
-					Spacer(modifier = Modifier.width(8.dp))
-					Text(stringResource(R.string.settings_storage_kickstart_rom_title), style = MaterialTheme.typography.titleMedium)
-				}
-				Spacer(modifier = Modifier.height(8.dp))
-
-				if (roms.isEmpty()) {
-					Text(
-						stringResource(R.string.settings_storage_no_roms_found),
-						style = MaterialTheme.typography.bodySmall,
-						color = MaterialTheme.colorScheme.error
-					)
-				} else {
-					FileDropdown(
-						label = stringResource(R.string.settings_storage_rom_file_label),
-						files = roms,
-						selectedPath = settings.romFile,
-						category = FileCategory.ROMS,
-						context = context,
-						onSelect = { viewModel.updateSettings { s -> s.copy(romFile = it) } },
-						onClear = { viewModel.updateSettings { s -> s.copy(romFile = "") } }
-					)
-					if (showExtendedRom) {
+					Column(modifier = Modifier.padding(16.dp)) {
+						Row(
+							verticalAlignment = Alignment.CenterVertically,
+							modifier = Modifier.fillMaxWidth(),
+							horizontalArrangement = Arrangement.SpaceBetween
+						) {
+							Row(verticalAlignment = Alignment.CenterVertically) {
+								Icon(Icons.Default.Memory, contentDescription = null, modifier = Modifier.size(20.dp))
+								Spacer(modifier = Modifier.width(8.dp))
+								Text(stringResource(R.string.settings_storage_kickstart_rom_title), style = MaterialTheme.typography.titleMedium)
+							}
+							TextButton(onClick = {
+								pendingCategoryFolderPicker = FileCategory.ROMS
+								val dir = FileManager.getEffectiveCategoryDir(context, FileCategory.ROMS)
+								folderPickerLauncher.launch(if (dir.exists()) pathToInitialUri(dir.absolutePath) else null)
+							}) {
+								Text("Set Folder")
+							}
+						}
 						Spacer(modifier = Modifier.height(8.dp))
-						FileDropdown(
-							label = stringResource(R.string.settings_storage_rom_ext_file_label),
-							files = roms,
-							selectedPath = settings.romExtFile,
-							category = FileCategory.ROMS,
-							context = context,
-							onSelect = { viewModel.updateSettings { s -> s.copy(romExtFile = it) } },
-							onClear = { viewModel.updateSettings { s -> s.copy(romExtFile = "") } }
+
+						if (roms.isEmpty()) {
+							Text(
+								stringResource(R.string.settings_storage_no_roms_found),
+								style = MaterialTheme.typography.bodySmall,
+								color = MaterialTheme.colorScheme.error
+							)
+						} else {
+							FileDropdown(
+								label = stringResource(R.string.settings_storage_rom_file_label),
+								files = roms,
+								selectedPath = settings.romFile,
+								category = FileCategory.ROMS,
+								context = context,
+								onSelect = { viewModel.updateSettings { s -> s.copy(romFile = it) } },
+								onClear = { viewModel.updateSettings { s -> s.copy(romFile = "") } }
+							)
+							if (showExtendedRom) {
+								Spacer(modifier = Modifier.height(8.dp))
+								FileDropdown(
+									label = stringResource(R.string.settings_storage_rom_ext_file_label),
+									files = roms,
+									selectedPath = settings.romExtFile,
+									category = FileCategory.ROMS,
+									context = context,
+									onSelect = { viewModel.updateSettings { s -> s.copy(romExtFile = it) } },
+									onClear = { viewModel.updateSettings { s -> s.copy(romExtFile = "") } }
+								)
+							}
+						}
+					}
+				}
+
+				OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+					Column(modifier = Modifier.padding(16.dp)) {
+						Row(
+							verticalAlignment = Alignment.CenterVertically,
+							modifier = Modifier.fillMaxWidth(),
+							horizontalArrangement = Arrangement.SpaceBetween
+						) {
+							Row(verticalAlignment = Alignment.CenterVertically) {
+								Icon(Icons.Default.SaveAlt, contentDescription = null, modifier = Modifier.size(20.dp))
+								Spacer(modifier = Modifier.width(8.dp))
+								Text(stringResource(R.string.settings_storage_floppy_drives_title), style = MaterialTheme.typography.titleMedium)
+							}
+							TextButton(onClick = {
+								pendingCategoryFolderPicker = FileCategory.FLOPPIES
+								val dir = FileManager.getEffectiveCategoryDir(context, FileCategory.FLOPPIES)
+								folderPickerLauncher.launch(if (dir.exists()) pathToInitialUri(dir.absolutePath) else null)
+							}) {
+								Text("Set Folder")
+							}
+						}
+						Spacer(modifier = Modifier.height(8.dp))
+
+						// Compact 2x2 grid for floppy drives
+						FloppyDriveCompactRow(
+							drives = listOf(
+								CompactDrive("DF0", settings.floppy0, settings.floppy0Type) { path, type ->
+									viewModel.updateSettings { s -> s.copy(floppy0 = path, floppy0Type = type) }
+								},
+								CompactDrive("DF1", settings.floppy1, settings.floppy1Type) { path, type ->
+									viewModel.updateSettings { s -> s.copy(floppy1 = path, floppy1Type = type) }
+								},
+								CompactDrive("DF2", settings.floppy2, settings.floppy2Type) { path, type ->
+									viewModel.updateSettings { s -> s.copy(floppy2 = path, floppy2Type = type) }
+								},
+								CompactDrive("DF3", settings.floppy3, settings.floppy3Type) { path, type ->
+									viewModel.updateSettings { s -> s.copy(floppy3 = path, floppy3Type = type) }
+								}
+							),
+							files = floppies,
+							context = context
 						)
 					}
 				}
-			}
-		}
-
-				OutlinedCard(modifier = Modifier.fillMaxWidth()) {
-			Column(modifier = Modifier.padding(16.dp)) {
-				Row(verticalAlignment = Alignment.CenterVertically) {
-					Icon(Icons.Default.SaveAlt, contentDescription = null, modifier = Modifier.size(20.dp))
-					Spacer(modifier = Modifier.width(8.dp))
-					Text(stringResource(R.string.settings_storage_floppy_drives_title), style = MaterialTheme.typography.titleMedium)
-				}
-				Spacer(modifier = Modifier.height(8.dp))
-
-				// Compact 2x2 grid for floppy drives
-				FloppyDriveCompactRow(
-					drives = listOf(
-						CompactDrive("DF0", settings.floppy0, settings.floppy0Type) { path, type ->
-							viewModel.updateSettings { s -> s.copy(floppy0 = path, floppy0Type = type) }
-						},
-						CompactDrive("DF1", settings.floppy1, settings.floppy1Type) { path, type ->
-							viewModel.updateSettings { s -> s.copy(floppy1 = path, floppy1Type = type) }
-						},
-						CompactDrive("DF2", settings.floppy2, settings.floppy2Type) { path, type ->
-							viewModel.updateSettings { s -> s.copy(floppy2 = path, floppy2Type = type) }
-						},
-						CompactDrive("DF3", settings.floppy3, settings.floppy3Type) { path, type ->
-							viewModel.updateSettings { s -> s.copy(floppy3 = path, floppy3Type = type) }
-						}
-					),
-					files = floppies,
-					context = context
-				)
-			}
-		}
 			},
 			right = {
 
 				OutlinedCard(modifier = Modifier.fillMaxWidth()) {
-			Column(modifier = Modifier.padding(16.dp)) {
-				Row(verticalAlignment = Alignment.CenterVertically) {
-					Icon(Icons.Default.Album, contentDescription = null, modifier = Modifier.size(20.dp))
-					Spacer(modifier = Modifier.width(8.dp))
-					Text(stringResource(R.string.settings_storage_cd_image_title), style = MaterialTheme.typography.titleMedium)
-				}
-				Spacer(modifier = Modifier.height(8.dp))
+					Column(modifier = Modifier.padding(16.dp)) {
+						Row(
+							verticalAlignment = Alignment.CenterVertically,
+							modifier = Modifier.fillMaxWidth(),
+							horizontalArrangement = Arrangement.SpaceBetween
+						) {
+							Row(verticalAlignment = Alignment.CenterVertically) {
+								Icon(Icons.Default.Album, contentDescription = null, modifier = Modifier.size(20.dp))
+								Spacer(modifier = Modifier.width(8.dp))
+								Text(stringResource(R.string.settings_storage_cd_image_title), style = MaterialTheme.typography.titleMedium)
+							}
+							TextButton(onClick = {
+								pendingCategoryFolderPicker = FileCategory.CD_IMAGES
+								val dir = FileManager.getEffectiveCategoryDir(context, FileCategory.CD_IMAGES)
+								folderPickerLauncher.launch(if (dir.exists()) pathToInitialUri(dir.absolutePath) else null)
+							}) {
+								Text("Set Folder")
+							}
+						}
+						Spacer(modifier = Modifier.height(8.dp))
 
-				if (cds.isEmpty()) {
-					Text(
-						stringResource(R.string.settings_storage_no_cd_images_found),
-						style = MaterialTheme.typography.bodySmall,
-						color = MaterialTheme.colorScheme.onSurfaceVariant
-					)
-				} else {
-					FileDropdown(
-						label = stringResource(R.string.settings_storage_cd_image_label),
-						files = cds,
-						selectedPath = settings.cdImage,
-						category = FileCategory.CD_IMAGES,
-						context = context,
-						onSelect = { viewModel.updateSettings { s -> s.copy(cdImage = it) } },
-						onClear = { viewModel.updateSettings { s -> s.copy(cdImage = "") } }
-					)
+						if (cds.isEmpty()) {
+							Text(
+								stringResource(R.string.settings_storage_no_cd_images_found),
+								style = MaterialTheme.typography.bodySmall,
+								color = MaterialTheme.colorScheme.onSurfaceVariant
+							)
+						} else {
+							FileDropdown(
+								label = stringResource(R.string.settings_storage_cd_image_label),
+								files = cds,
+								selectedPath = settings.cdImage,
+								category = FileCategory.CD_IMAGES,
+								context = context,
+								onSelect = { viewModel.updateSettings { s -> s.copy(cdImage = it) } },
+								onClear = { viewModel.updateSettings { s -> s.copy(cdImage = "") } }
+							)
+						}
+					}
 				}
-			}
-		}
 
 				OutlinedCard(modifier = Modifier.fillMaxWidth()) {
 					Column(modifier = Modifier.padding(16.dp)) {
-						Row(verticalAlignment = Alignment.CenterVertically) {
-							Icon(Icons.Default.SaveAlt, contentDescription = null, modifier = Modifier.size(20.dp))
-							Spacer(modifier = Modifier.width(8.dp))
-							Text(stringResource(R.string.settings_storage_hard_drives_title), style = MaterialTheme.typography.titleMedium)
+						Row(
+							verticalAlignment = Alignment.CenterVertically,
+							modifier = Modifier.fillMaxWidth(),
+							horizontalArrangement = Arrangement.SpaceBetween
+						) {
+							Row(verticalAlignment = Alignment.CenterVertically) {
+								Icon(Icons.Default.SaveAlt, contentDescription = null, modifier = Modifier.size(20.dp))
+								Spacer(modifier = Modifier.width(8.dp))
+								Text(stringResource(R.string.settings_storage_hard_drives_title), style = MaterialTheme.typography.titleMedium)
+							}
+							TextButton(onClick = {
+								pendingCategoryFolderPicker = FileCategory.HARD_DRIVES
+								val dir = FileManager.getEffectiveCategoryDir(context, FileCategory.HARD_DRIVES)
+								folderPickerLauncher.launch(if (dir.exists()) pathToInitialUri(dir.absolutePath) else null)
+							}) {
+								Text("Set Folder")
+							}
 						}
 						Spacer(modifier = Modifier.height(8.dp))
 						if (hardDrives.isEmpty()) {
@@ -238,6 +317,17 @@ fun StorageTab(viewModel: SettingsViewModel) {
 											val updated = s.hardDrives.toMutableList().apply { this[i] = "" }
 											s.copy(hardDrives = updated)
 										}
+									},
+									onPickDir = {
+										pendingDirPickerCallback = { pickedPath, uri ->
+											FileManager.persistDirectoryAccess(context, uri)
+											viewModel.updateSettings { s ->
+												val updated = s.hardDrives.toMutableList().apply { this[i] = pickedPath }
+												s.copy(hardDrives = updated)
+											}
+										}
+										val dir = FileManager.getEffectiveCategoryDir(context, FileCategory.HARD_DRIVES)
+										folderPickerLauncher.launch(if (dir.exists()) pathToInitialUri(dir.absolutePath) else null)
 									}
 								)
 							}
@@ -258,7 +348,8 @@ private fun FileDropdown(
 	category: FileCategory,
 	context: android.content.Context,
 	onSelect: (String) -> Unit,
-	onClear: () -> Unit
+	onClear: () -> Unit,
+	onPickDir: (() -> Unit)? = null
 ) {
 	var expanded by remember { mutableStateOf(false) }
 	val noneLabel = stringResource(R.string.placeholder_none)
@@ -312,26 +403,37 @@ private fun FileDropdown(
 						}
 					)
 				}
-				// Import from file picker — opens in category subfolder
-				Divider()
-				DropdownMenuItem(
-					text = { Text("Import...") },
-					onClick = {
-						expanded = false
-						pendingImportCallback = onSelect
-						val dir = FileManager.getEffectiveCategoryDir(context, category)
-						val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-							addCategory(Intent.CATEGORY_OPENABLE)
-							type = "*/*"
-							if (dir.exists()) {
-								pathToInitialUri(dir.absolutePath)?.let {
-									putExtra(DocumentsContract.EXTRA_INITIAL_URI, it)
+				if (category != FileCategory.ROMS) {
+					// Import from file picker — opens in category subfolder
+					Divider()
+					DropdownMenuItem(
+						text = { Text("Import...") },
+						onClick = {
+							expanded = false
+							pendingImportCallback = onSelect
+							val dir = FileManager.getEffectiveCategoryDir(context, category)
+							val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+								addCategory(Intent.CATEGORY_OPENABLE)
+								type = "*/*"
+								if (dir.exists()) {
+									pathToInitialUri(dir.absolutePath)?.let {
+										putExtra(DocumentsContract.EXTRA_INITIAL_URI, it)
+									}
 								}
 							}
+							importLauncher.launch(intent)
 						}
-						importLauncher.launch(intent)
+					)
+					if (onPickDir != null) {
+						DropdownMenuItem(
+							text = { Text("Mount Folder...") },
+							onClick = {
+								expanded = false
+								onPickDir()
+							}
+						)
 					}
-				)
+				}
 			}
 		}
 		if (selectedPath.isNotEmpty()) {

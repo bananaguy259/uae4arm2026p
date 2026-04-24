@@ -114,9 +114,13 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 		// Always re-check the ext ROM for these models so it gets filled in even
 		// when the kick ROM was already set (e.g. carried over from a previous session).
 		val needsExt = model == AmigaModel.CD32 || model == AmigaModel.CDTV
-		val extRomMissing = needsExt && settings.romExtFile.isBlank()
+		val extRomMissing = needsExt && (settings.romExtFile.isBlank() || !File(settings.romExtFile).exists())
 
-		if (settings.romFile.isNotBlank() && !extRomMissing) return
+		// Check if current ROM and floppy files still exist. If not, don't return early
+		// so that auto-selection can find a valid alternative from the scanned repository.
+		if (settings.romFile.isNotBlank() && File(settings.romFile).exists() && !extRomMissing) {
+			if (settings.floppy0.isBlank() || File(settings.floppy0).exists()) return
+		}
 
 		val selectedRoms = selectRomsForModel(model, roms)
 		// Prefer a CRC-matched Kickstart; fall back to the first available ROM file
@@ -259,6 +263,12 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 		val newSettings = transform(settings)
 		settings = applyConstraints(newSettings)
 		saveLastSession()
+	}
+
+	fun rescan() {
+		viewModelScope.launch {
+			repository.rescan()
+		}
 	}
 
 	fun generateLaunchArgs(): Array<String> {

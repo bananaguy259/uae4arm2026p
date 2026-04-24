@@ -161,12 +161,20 @@ fun QuickStartScreen(
     }
 
     // ── SAF folder picker ───────────────────────────────────────────────
-    var pendingFolderPickerCallback by remember { mutableStateOf<((String) -> Unit)?>(null) }
+    var pendingFolderPickerCategory by remember { mutableStateOf<FileCategory?>(null) }
+    var pendingFolderPickerCallback by remember { mutableStateOf<((String, Uri) -> Unit)?>(null) }
     val folderPickerLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
-        uri?.let { treeUriToPath(it)?.let { path -> pendingFolderPickerCallback?.invoke(path) } }
+        val callback = pendingFolderPickerCallback
+        val category = pendingFolderPickerCategory
+        if (uri != null && callback != null) {
+            treeUriToPath(uri)?.let { path ->
+                callback(path, uri)
+            }
+        }
         pendingFolderPickerCallback = null
+        pendingFolderPickerCategory = null
     }
 
     fun openFilePicker(category: FileCategory, @Suppress("UNUSED_PARAMETER") extensions: List<String>, onPicked: (String) -> Unit) {
@@ -184,7 +192,8 @@ fun QuickStartScreen(
         filePickerLauncher.launch(intent)
     }
 
-    fun openFolderPicker(category: FileCategory, onPicked: (String) -> Unit) {
+    fun openFolderPicker(category: FileCategory, onPicked: (String, Uri) -> Unit) {
+        pendingFolderPickerCategory = category
         pendingFolderPickerCallback = onPicked
         val dir = FileManager.getEffectiveCategoryDir(context, category)
         val initialUri = if (dir.exists()) pathToInitialUri(dir.absolutePath) else null
@@ -250,8 +259,9 @@ fun QuickStartScreen(
             KickstartStatusRow(
                 settings     = settings,
                 onPickFolder = {
-                    openFolderPicker(FileCategory.ROMS) { path ->
-                        FileManager.setCategoryLibraryPath(context, FileCategory.ROMS, path)
+                    openFolderPicker(FileCategory.ROMS) { path, uri ->
+                        FileManager.persistDirectoryAccess(context, uri)
+                        FileManager.setCategoryLibraryPath(context, FileCategory.ROMS, path, uri.toString())
                         viewModel.rescanRoms()
                     }
                 }

@@ -97,7 +97,7 @@
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|uiMode|navigation"
             android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
             android:enableOnBackInvokedCallback="true"
-            android:exported="false">
+            android:exported="true">
             <meta-data android:name="SDL_MAIN_LIBRARY_NAMES" android:value="uae4arm" />
         </activity>
 

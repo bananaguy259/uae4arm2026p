@@ -25,7 +25,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.CreateNewFolder
@@ -38,7 +37,6 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -52,7 +50,6 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.Button
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -101,11 +98,18 @@ private fun pathToInitialUri(path: String): Uri? {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FileManagerScreen(viewModel: FileManagerViewModel = viewModel()) {
+fun FileManagerScreen(
+	initialSection: Int = 0,
+	showSectionTabs: Boolean = true,
+	showTopBar: Boolean = true,
+	viewModel: FileManagerViewModel = viewModel()
+) {
 	val context = LocalContext.current
 	val scope = rememberCoroutineScope()
 	val snackbarHostState = remember { SnackbarHostState() }
+	var selectedSection by rememberSaveable { mutableIntStateOf(initialSection.coerceIn(0, 1)) }
 	var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+	val showingDownloads = selectedSection == 1
 
 	val tabs = listOf(
 		TabInfo(FileCategory.ROMS, stringResource(R.string.file_manager_tab_roms), Icons.Default.Memory),
@@ -161,21 +165,7 @@ fun FileManagerScreen(viewModel: FileManagerViewModel = viewModel()) {
 		viewModel.setCategoryLibraryPath(currentCategory, uri)
 	}
 	val currentLibraryPath = viewModel.getCategoryLibraryPath(currentCategory)
-
-	fun launchFilePicker() {
-		val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-			addCategory(Intent.CATEGORY_OPENABLE)
-			type = "*/*"
-			putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
-			val dir = FileManager.getEffectiveCategoryDir(context, currentCategory)
-			if (dir.exists()) {
-				pathToInitialUri(dir.absolutePath)?.let {
-					putExtra(DocumentsContract.EXTRA_INITIAL_URI, it)
-				}
-			}
-		}
-		filePickerLauncher.launch(intent)
-	}
+	val hasAnyLibraryPath = FileCategory.entries.any { viewModel.getCategoryLibraryPath(it) != null }
 
 	fun launchFolderPicker() {
 		val dir = FileManager.getEffectiveCategoryDir(context, currentCategory)
@@ -190,18 +180,16 @@ fun FileManagerScreen(viewModel: FileManagerViewModel = viewModel()) {
 		}
 	}
 
+	LaunchedEffect(showingDownloads) {
+		if (showingDownloads) {
+			viewModel.primeAdfGroupsOnFirstDownloadsVisit()
+		}
+	}
+
 	Scaffold(
 		snackbarHost = { SnackbarHost(snackbarHostState) },
-		topBar = {
-			TopAppBar(title = { Text(stringResource(R.string.file_manager_title)) })
-		},
-		floatingActionButton = {
-			ExtendedFloatingActionButton(
-				onClick = { launchFilePicker() },
-				icon = { Icon(Icons.Default.Add, contentDescription = null) },
-				text = { Text(stringResource(R.string.action_import)) }
-			)
-		}
+		topBar = {},
+		floatingActionButton = {}
 	) { innerPadding ->
 		Column(
 			modifier = Modifier
@@ -212,164 +200,192 @@ fun FileManagerScreen(viewModel: FileManagerViewModel = viewModel()) {
 				modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
 			)
 
-			OutlinedCard(
-				modifier = Modifier
-					.fillMaxWidth()
-					.padding(horizontal = 16.dp, vertical = 8.dp)
-			) {
-				Row(
+			if (showSectionTabs) {
+				SecondaryScrollableTabRow(
+					selectedTabIndex = selectedSection,
+					modifier = Modifier.fillMaxWidth()
+				) {
+					listOf(
+						stringResource(R.string.file_manager_section_library),
+						stringResource(R.string.file_manager_section_downloads)
+					).forEachIndexed { index, title ->
+						Tab(
+							selected = selectedSection == index,
+							onClick = { selectedSection = index },
+							text = { Text(title) }
+						)
+					}
+				}
+			}
+
+			if (showingDownloads) {
+				ArchiveDownloadsPane(
+					viewModel = viewModel,
+					modifier = Modifier.weight(1f)
+				)
+			} else {
+				OutlinedCard(
 					modifier = Modifier
 						.fillMaxWidth()
-						.padding(horizontal = 12.dp, vertical = 8.dp),
-					verticalAlignment = Alignment.CenterVertically,
-					horizontalArrangement = Arrangement.SpaceBetween
+						.padding(horizontal = 16.dp, vertical = 8.dp)
 				) {
-					Column(modifier = Modifier.weight(1f)) {
-						Row(verticalAlignment = Alignment.CenterVertically) {
-							Icon(
-								Icons.Default.FolderOpen,
-								contentDescription = null,
-								modifier = Modifier.size(16.dp)
-							)
-							Spacer(modifier = Modifier.width(6.dp))
+					Row(
+						modifier = Modifier
+							.fillMaxWidth()
+							.padding(horizontal = 12.dp, vertical = 8.dp),
+						verticalAlignment = Alignment.CenterVertically,
+						horizontalArrangement = Arrangement.SpaceBetween
+					) {
+						Column(modifier = Modifier.weight(1f)) {
+							Row(verticalAlignment = Alignment.CenterVertically) {
+								Icon(
+									Icons.Default.FolderOpen,
+									contentDescription = null,
+									modifier = Modifier.size(16.dp)
+								)
+								Spacer(modifier = Modifier.width(6.dp))
+								Text(
+									"Library folder",
+									style = MaterialTheme.typography.labelMedium
+								)
+							}
 							Text(
-								"Library folder",
-								style = MaterialTheme.typography.labelMedium
+								text = currentLibraryPath ?: viewModel.getStoragePath(),
+								style = MaterialTheme.typography.bodySmall,
+								fontFamily = FontFamily.Monospace,
+								color = MaterialTheme.colorScheme.onSurfaceVariant,
+								maxLines = 1
 							)
+							if (currentLibraryPath == null) {
+								Text(
+									text = "No external folder selected for ${tabs[selectedTab].title.lowercase(Locale.getDefault())}. Direct picks will still work.",
+									style = MaterialTheme.typography.bodySmall,
+									color = MaterialTheme.colorScheme.onSurfaceVariant
+								)
+							}
 						}
-						Text(
-							text = currentLibraryPath ?: viewModel.getStoragePath(),
-							style = MaterialTheme.typography.bodySmall,
-							fontFamily = FontFamily.Monospace,
-							color = MaterialTheme.colorScheme.onSurfaceVariant,
-							maxLines = 1
+
+						Row(verticalAlignment = Alignment.CenterVertically) {
+							IconButton(onClick = { launchFolderPicker() }) {
+								Icon(
+									Icons.Default.CreateNewFolder,
+									contentDescription = "Pick library folder",
+									modifier = Modifier.size(18.dp)
+								)
+							}
+							if (hasAnyLibraryPath) {
+								IconButton(onClick = { viewModel.clearAllCategoryLibraryPaths() }) {
+									Icon(
+										Icons.Default.Clear,
+										contentDescription = "Reset library parent folder",
+										modifier = Modifier.size(18.dp)
+									)
+								}
+							}
+							if (currentLibraryPath != null) {
+								IconButton(onClick = { viewModel.clearCategoryLibraryPath(currentCategory) }) {
+									Icon(
+										Icons.Default.Delete,
+										contentDescription = "Clear library folder",
+										modifier = Modifier.size(18.dp)
+									)
+								}
+							}
+							IconButton(
+								onClick = {
+									val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+									clipboard.setPrimaryClip(ClipData.newPlainText(clipboardLabelPath, currentLibraryPath ?: viewModel.getStoragePath()))
+									scope.launch { snackbarHostState.showSnackbar(pathCopiedMessage) }
+								}
+							) {
+								Icon(
+									Icons.Default.ContentCopy,
+									contentDescription = stringResource(R.string.file_manager_copy_path),
+									modifier = Modifier.size(18.dp)
+								)
+							}
+						}
+					}
+				}
+
+				SecondaryScrollableTabRow(
+					selectedTabIndex = selectedTab,
+					modifier = Modifier
+						.fillMaxWidth()
+						.focusGroup()
+				) {
+					tabs.forEachIndexed { index, tab ->
+						Tab(
+							selected = selectedTab == index,
+							onClick = { selectedTab = index; searchQuery = "" },
+							text = { Text(tab.title) },
+							icon = { Icon(tab.icon, contentDescription = tab.title, modifier = Modifier.size(18.dp)) }
 						)
-						if (currentLibraryPath == null) {
+					}
+				}
+
+				if (allFiles.size > 5) {
+					OutlinedTextField(
+						value = searchQuery,
+						onValueChange = { searchQuery = it },
+						modifier = Modifier
+							.fillMaxWidth()
+							.padding(horizontal = 16.dp, vertical = 4.dp),
+						placeholder = { Text(stringResource(R.string.search_placeholder)) },
+						leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
+						trailingIcon = {
+							if (searchQuery.isNotEmpty()) {
+								IconButton(onClick = { searchQuery = "" }) {
+									Icon(Icons.Default.Clear, contentDescription = null, modifier = Modifier.size(18.dp))
+								}
+							}
+						},
+						singleLine = true
+					)
+				}
+
+				if (showProgress) {
+					LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+				}
+
+				if (files.isEmpty() && !isScanning) {
+					Box(
+						modifier = Modifier
+							.fillMaxSize()
+							.padding(32.dp),
+						contentAlignment = Alignment.Center
+					) {
+						Column(horizontalAlignment = Alignment.CenterHorizontally) {
 							Text(
-								text = "No external folder selected for ${tabs[selectedTab].title.lowercase(Locale.getDefault())}. Direct picks will still work.",
+								text = stringResource(
+									R.string.file_manager_no_files_found,
+									tabs[selectedTab].title.lowercase(Locale.getDefault())
+								),
+								style = MaterialTheme.typography.bodyLarge
+							)
+							Spacer(modifier = Modifier.height(8.dp))
+							Text(
+								text = stringResource(
+									R.string.file_manager_empty_help,
+									viewModel.getStoragePath(),
+									currentCategory.dirName
+								),
 								style = MaterialTheme.typography.bodySmall,
 								color = MaterialTheme.colorScheme.onSurfaceVariant
 							)
 						}
 					}
-
-					Row(verticalAlignment = Alignment.CenterVertically) {
-						IconButton(onClick = { launchFolderPicker() }) {
-							Icon(
-								Icons.Default.CreateNewFolder,
-								contentDescription = "Pick library folder",
-								modifier = Modifier.size(18.dp)
+				} else {
+					LazyColumn(
+						contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+						verticalArrangement = Arrangement.spacedBy(6.dp)
+					) {
+						items(files, key = { it.path }) { file ->
+							FileItem(
+								file = file,
+								onDelete = { viewModel.deleteFile(file) }
 							)
 						}
-						if (currentLibraryPath != null) {
-							IconButton(onClick = { viewModel.clearCategoryLibraryPath(currentCategory) }) {
-								Icon(
-									Icons.Default.Delete,
-									contentDescription = "Clear library folder",
-									modifier = Modifier.size(18.dp)
-								)
-							}
-						}
-						IconButton(
-							onClick = {
-								val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-								clipboard.setPrimaryClip(ClipData.newPlainText(clipboardLabelPath, currentLibraryPath ?: viewModel.getStoragePath()))
-								scope.launch { snackbarHostState.showSnackbar(pathCopiedMessage) }
-							}
-						) {
-							Icon(
-								Icons.Default.ContentCopy,
-								contentDescription = stringResource(R.string.file_manager_copy_path),
-								modifier = Modifier.size(18.dp)
-							)
-						}
-					}
-				}
-			}
-
-			SecondaryScrollableTabRow(
-				selectedTabIndex = selectedTab,
-				modifier = Modifier
-					.fillMaxWidth()
-					.focusGroup()
-			) {
-				tabs.forEachIndexed { index, tab ->
-					Tab(
-						selected = selectedTab == index,
-						onClick = { selectedTab = index; searchQuery = "" },
-						text = { Text(tab.title) },
-						icon = { Icon(tab.icon, contentDescription = tab.title, modifier = Modifier.size(18.dp)) }
-					)
-				}
-			}
-
-			if (allFiles.size > 5) {
-				OutlinedTextField(
-					value = searchQuery,
-					onValueChange = { searchQuery = it },
-					modifier = Modifier
-						.fillMaxWidth()
-						.padding(horizontal = 16.dp, vertical = 4.dp),
-					placeholder = { Text(stringResource(R.string.search_placeholder)) },
-					leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
-					trailingIcon = {
-						if (searchQuery.isNotEmpty()) {
-							IconButton(onClick = { searchQuery = "" }) {
-								Icon(Icons.Default.Clear, contentDescription = null, modifier = Modifier.size(18.dp))
-							}
-						}
-					},
-					singleLine = true
-				)
-			}
-
-			if (showProgress) {
-				LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-			}
-
-			if (files.isEmpty() && !isScanning) {
-				Box(
-					modifier = Modifier
-						.fillMaxSize()
-						.padding(32.dp),
-					contentAlignment = Alignment.Center
-				) {
-					Column(horizontalAlignment = Alignment.CenterHorizontally) {
-						Text(
-							text = stringResource(
-								R.string.file_manager_no_files_found,
-								tabs[selectedTab].title.lowercase(Locale.getDefault())
-							),
-							style = MaterialTheme.typography.bodyLarge
-						)
-						Spacer(modifier = Modifier.height(8.dp))
-						Text(
-							text = stringResource(
-								R.string.file_manager_empty_help,
-								viewModel.getStoragePath(),
-								currentCategory.dirName
-							),
-							style = MaterialTheme.typography.bodySmall,
-							color = MaterialTheme.colorScheme.onSurfaceVariant
-						)
-						Spacer(modifier = Modifier.height(24.dp))
-						Button(onClick = { launchFilePicker() }) {
-							Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-							Spacer(modifier = Modifier.width(8.dp))
-							Text(stringResource(R.string.file_manager_import_category, tabs[selectedTab].title))
-						}
-					}
-				}
-			} else {
-				LazyColumn(
-					contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-					verticalArrangement = Arrangement.spacedBy(6.dp)
-				) {
-					items(files, key = { it.path }) { file ->
-						FileItem(
-							file = file,
-							onDelete = { viewModel.deleteFile(file) }
-						)
 					}
 				}
 			}

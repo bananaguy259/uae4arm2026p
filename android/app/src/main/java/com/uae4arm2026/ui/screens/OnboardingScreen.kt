@@ -137,6 +137,7 @@ fun OnboardingScreen(navController: NavController) {
 	var scanning       by remember { mutableStateOf(false) }
 	var scanned        by remember { mutableStateOf(false) }
 	val detectedPaths  = remember { mutableStateMapOf<FileCategory, String>() }
+	val detectedUris   = remember { mutableStateMapOf<FileCategory, Uri>() }
 	val detectedCounts = remember { mutableStateMapOf<FileCategory, Int>() }
 	var selectedModel  by remember { mutableStateOf(AmigaModel.A1200) }
 
@@ -169,6 +170,7 @@ fun OnboardingScreen(navController: NavController) {
 
 	// -- Folder scan ----------------------------------------------------------
 	fun startScan(uri: Uri) {
+		FileManager.persistDirectoryAccess(context, uri)
 		val path = treeUriToPath(context, uri)
 		rootPath = path ?: ""
 		scanning = true
@@ -178,9 +180,12 @@ fun OnboardingScreen(navController: NavController) {
 				FileManager.detectCategoryFolders(context, uri)
 			}
 			detectedPaths.clear()
-			detectedPaths.putAll(detected)
+			detectedUris.clear()
 			detectedCounts.clear()
-			detected.forEach { (cat, folderPath) ->
+			detected.forEach { (cat, pair) ->
+				val (folderPath, docUri) = pair
+				detectedPaths[cat] = folderPath
+				detectedUris[cat] = docUri
 				val count = withContext(Dispatchers.IO) {
 					val dir = File(folderPath)
 					dir.listFiles()
@@ -206,7 +211,9 @@ fun OnboardingScreen(navController: NavController) {
 	// -- Finish onboarding ----------------------------------------------------
 	fun finish(model: AmigaModel) {
 		detectedPaths.forEach { (cat, path) ->
-			if (path.isNotBlank()) FileManager.setCategoryLibraryPath(context, cat, path)
+			if (path.isNotBlank()) {
+				FileManager.setCategoryLibraryPath(context, cat, path, detectedUris[cat]?.toString())
+			}
 		}
 		prefs.setHasCompletedSetup(true)
 		prefs.setHasSeenWelcome(true)

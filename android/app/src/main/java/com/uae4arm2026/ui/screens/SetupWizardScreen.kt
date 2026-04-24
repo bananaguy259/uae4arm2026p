@@ -119,20 +119,35 @@ fun SetupWizardScreen(navController: NavController) {
 
     // ── Finish setup ──────────────────────────────────────────────────────────
     fun finish() {
-        assignedPaths.forEach { (category, path) ->
-            if (path.isNotBlank()) FileManager.setCategoryLibraryPath(context, category, path)
-        }
-        prefs.setHasCompletedSetup(true)
-        prefs.setHasSeenWelcome(true)
-        scope.launch { FileRepository.getInstance(context).rescan() }
-        navController.navigate(Screen.QuickStart.route) {
-            popUpTo(Screen.Setup.route) { inclusive = true }
+        try {
+            assignedPaths.forEach { (category, path) ->
+                if (path.isNotBlank()) FileManager.setCategoryLibraryPath(context, category, path)
+            }
+            prefs.setHasCompletedSetup(true)
+            prefs.setHasSeenWelcome(true)
+            scope.launch { 
+                try {
+                    FileRepository.getInstance(context).rescan()
+                } catch (e: Exception) {
+                    android.util.Log.e("SetupWizard", "Rescan failed after setup", e)
+                }
+            }
+            navController.navigate(Screen.QuickStart.route) {
+                popUpTo(Screen.Setup.route) { inclusive = true }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("SetupWizard", "Finish setup failed", e)
+            // Still try to navigate out if possible
+            navController.navigate(Screen.QuickStart.route) {
+                popUpTo(Screen.Setup.route) { inclusive = true }
+            }
         }
     }
 
     // ── Parent folder scan ────────────────────────────────────────────────────
     fun pickParentFolder() {
         openPicker { uri, path ->
+            FileManager.persistDirectoryAccess(context, uri)
             rootPath = path
             step = WizardStep.SCANNING
             scope.launch {
@@ -140,10 +155,12 @@ fun SetupWizardScreen(navController: NavController) {
                     FileManager.detectCategoryFolders(context, uri)
                 }
                 assignedPaths.clear()
-                assignedPaths.putAll(detected)
-                // Auto-save all detected mappings and return to home.
-                // If nothing was detected, fall through to the ASSIGN review step
-                // so the user can manually set paths.
+                detected.forEach { (category, pair) ->
+                    val (resolvedPath, docUri) = pair
+                    assignedPaths[category] = resolvedPath
+                    FileManager.setCategoryLibraryPath(context, category, resolvedPath, docUri.toString())
+                }
+
                 if (detected.isNotEmpty()) {
                     finish()
                 } else {
@@ -169,7 +186,11 @@ fun SetupWizardScreen(navController: NavController) {
                     rootPath       = rootPath,
                     assignedPaths  = assignedPaths,
                     onPickCategory = { category ->
-                        openPicker { _, path -> assignedPaths[category] = path }
+                        openPicker { uri, path ->
+                            FileManager.persistDirectoryAccess(context, uri)
+                            assignedPaths[category] = path
+                            FileManager.setCategoryLibraryPath(context, category, path, uri.toString())
+                        }
                     },
                     onPickParent   = { pickParentFolder() },
                     onFinish       = { finish() }

@@ -587,7 +587,9 @@ bool my_utime(const char* name, const struct mytimeval* tv)
 		ok = _utime(name, &utb) == 0;
 #else
 		struct timeval times[2];
-		times[0] = times[1] = { mtv.tv_sec, mtv.tv_usec };
+		times[0].tv_sec = static_cast<decltype(times[0].tv_sec)>(mtv.tv_sec);
+		times[0].tv_usec = static_cast<decltype(times[0].tv_usec)>(mtv.tv_usec);
+		times[1] = times[0];
 		ok = utimes(name, times) == 0;
 #endif
 	}

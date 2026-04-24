@@ -2,6 +2,7 @@ package com.uae4arm2026.data
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import com.uae4arm2026.Uae4ArmEmulatorActivity
 import com.uae4arm2026.data.model.EmulatorSettings
 import com.uae4arm2026.data.model.AmigaModel
@@ -119,6 +120,12 @@ object EmulatorLauncher {
 	 *                     is expected and should not trigger the crash dialog.
 	 */
 	private fun launchSdlActivity(context: Context, args: Array<String>, trackSession: Boolean = true) {
+		val hasRom = args.any { it.startsWith("kickstart_rom_file=") } ||
+				args.contains("--config") ||
+				args.contains("-s") && args.any { it.startsWith("kickstart_rom_file=") }
+
+		android.util.Log.d("Uae4Arm-Launcher", "Launching emulator. trackSession=$trackSession, args: ${args.joinToString(" ")}")
+
 		if (trackSession) {
 			writeSessionMarker(context)
 			writePendingLaunchMarker(context)
@@ -166,28 +173,63 @@ object EmulatorLauncher {
 	private fun needsRomRescan(context: Context): Boolean {
 		val prefs = AppPreferences.getInstance(context)
 		val base = FileManager.getAppStoragePath(context)
-		val dirs = mutableListOf(
-			FileManager.getCategoryDir(context, FileCategory.ROMS),
-			File(base),
-			File(base, "whdboot/game-data/Kickstarts")
-		)
-		FileManager.getCategoryLibraryPath(context, FileCategory.ROMS)?.let { dirs.add(File(it)) }
-		val currentFingerprint = dirs.joinToString("|") { computeDirFingerprint(it) }
+		val category = FileCategory.ROMS
+		val romExtensions = FileManager.getScannableExtensions(category)
 
+		val fingerprints = mutableListOf<String>()
+
+		// Local app-owned dirs
+		val localDirs = listOf(
+			FileManager.getCategoryDir(context, category),
+			File(base),
+			File(base, "whdboot/game-data/Kickstarts"),
+			File(base, "whdboot/save-data/Kickstarts")
+		)
+		for (dir in localDirs) {
+			fingerprints.add(computeDirFingerprint(dir, romExtensions))
+		}
+
+		// External SAF dir
+		val uriString = FileManager.getCategoryLibraryUri(context, category)
+		if (!uriString.isNullOrBlank()) {
+			fingerprints.add(computeDocumentFingerprint(context, Uri.parse(uriString), romExtensions))
+		}
+
+		val currentFingerprint = fingerprints.joinToString("|")
 		if (currentFingerprint == prefs.lastRomFingerprint) return false
 
 		prefs.lastRomFingerprint = currentFingerprint
 		return true
 	}
 
-	private fun computeDirFingerprint(dir: File): String {
+	private fun computeDirFingerprint(dir: File, extensions: Set<String>): String {
 		if (!dir.exists()) return "0:0:0"
 		val romFiles = dir.listFiles { f ->
-			f.isFile && f.extension.lowercase() in FileCategory.ROMS.extensions
+			f.isFile && f.extension.lowercase() in extensions
 		} ?: return "0:0:0"
 		val count = romFiles.size
 		val totalSize = romFiles.sumOf { it.length() }
 		val latestModified = romFiles.maxOfOrNull { it.lastModified() } ?: 0L
+		return "$count:$totalSize:$latestModified"
+	}
+
+	private fun computeDocumentFingerprint(context: Context, treeUri: Uri, extensions: Set<String>): String {
+		val root = androidx.documentfile.provider.DocumentFile.fromTreeUri(context, treeUri)
+		if (root == null || !root.isDirectory) return "0:0:0"
+
+		val files = root.listFiles()
+		var count = 0
+		var totalSize = 0L
+		var latestModified = 0L
+
+		for (doc in files) {
+			if (doc.isFile && doc.name?.substringAfterLast('.', "")?.lowercase() in extensions) {
+				count++
+				totalSize += doc.length()
+				val mod = doc.lastModified()
+				if (mod > latestModified) latestModified = mod
+			}
+		}
 		return "$count:$totalSize:$latestModified"
 	}
 

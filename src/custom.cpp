@@ -6435,6 +6435,13 @@ static void hsync_handler(bool vs)
 {
 	display_last_hsync = get_cycles();
 
+	if (vs) {
+		static int vtrace_count = 0;
+		if (vtrace_count++ % 100 == 0) {
+			write_log("TRACE: Amiga VSync counter=%d\n", vsync_counter);
+		}
+	}
+
 	hsync_handler_pre(vs);
 	if (vs) {
 		devices_vsync_pre();

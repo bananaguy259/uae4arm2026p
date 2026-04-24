@@ -829,7 +829,8 @@ bool my_existslink(const char* name)
 bool my_existsfile2(const char* name)
 {
 	if (!name) return false;
-	return fs::exists(name) && fs::is_regular_file(name);
+	std::error_code ec;
+	return fs::exists(name, ec) && !ec && fs::is_regular_file(name, ec) && !ec;
 }
 
 bool my_existsfiledir(const char *name)
@@ -850,14 +851,16 @@ bool my_existsfile(const char* name)
 {
 	if (!name) return false;
 	const auto output = iso_8859_1_to_utf8(string(name));
-	return fs::exists(output) && fs::is_regular_file(output);
+	std::error_code ec;
+	return fs::exists(output, ec) && !ec && fs::is_regular_file(output, ec) && !ec;
 }
 
 bool my_existsdir(const char* name)
 {
 	if (!name) return false;
 	const auto output = iso_8859_1_to_utf8(string(name));
-	return fs::exists(output) && fs::is_directory(output);
+	std::error_code ec;
+	return fs::exists(output, ec) && !ec && fs::is_directory(output, ec) && !ec;
 }
 
 uae_s64 my_fsize(struct my_openfile_s* mos)
@@ -1407,8 +1410,9 @@ unsigned int my_read(struct my_openfile_s* mos, void* b, unsigned int size)
 		}
 
 		// Ensure we have write permission to delete
-		if (!fs::is_regular_file(filepath) || (fs::status(filepath, ec).permissions() & fs::perms::owner_all) == fs::perms::none) {
-			write_log("my_unlink: insufficient permissions to remove %s\n", path);
+		auto status = fs::status(filepath, ec);
+		if (ec || !fs::is_regular_file(status) || (status.permissions() & fs::perms::owner_all) == fs::perms::none) {
+			write_log("my_unlink: insufficient permissions or not a file: %s\n", path);
 			errno = EACCES;
 			return -1;
 		}

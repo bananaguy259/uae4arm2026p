@@ -46,6 +46,8 @@ object AgsDetector {
         "DH8" to "WHD_Demos.hdf",
         "DH9" to "WHD_Games.hdf",
     )
+    private val AGS_DRIVE_SLOTS = ALL_HDF_MOUNTS.map { (dev, _) -> dev }
+    private val AGS_DRIVE_IMAGE_EXTENSIONS = setOf("hdf", "hdi", "vhd", "hdz")
 
     data class AgsInstall(
         /** The `AGS_UAE/` directory. */
@@ -93,6 +95,7 @@ object AgsDetector {
      * Accepts either the AGS_UAE directory itself or a parent directory that contains it.
      */
     fun detectFromPath(path: String): AgsInstall? {
+        android.util.Log.d("AgsDetector", "Checking path: $path")
         val selected = File(path)
         val candidates = buildList {
             add(selected)
@@ -105,7 +108,17 @@ object AgsDetector {
             }
         }
 
-        val agsDir = candidates.firstOrNull { isValidAgsDir(it) } ?: return null
+        // On Android 11+, java.io.File.isDirectory() might return false even if we have SAF access.
+        // We look for a directory that contains at least some required HDFs or is named AGS_UAE.
+        val agsDir = candidates.firstOrNull { dir ->
+            val isAgsNamed = dir.name.equals("AGS_UAE", ignoreCase = true)
+            val hasRequired = REQUIRED_HDFS.any { File(dir, it).exists() }
+            
+            android.util.Log.v("AgsDetector", "Candidate ${dir.absolutePath}: isAgsNamed=$isAgsNamed, hasRequired=$hasRequired")
+            isAgsNamed || hasRequired || isValidAgsDir(dir)
+        } ?: return null
+
+        android.util.Log.i("AgsDetector", "Detected AGS at: ${agsDir.absolutePath}")
         return AgsInstall(
             agsDir = agsDir,
             romFile = findRom(agsDir),
@@ -125,7 +138,7 @@ object AgsDetector {
         val parent = files.firstOrNull()?.parentFile ?: return null
         if (files.any { it.parentFile?.absolutePath != parent.absolutePath }) return null
 
-        val requiredPresent = REQUIRED_HDFS.all { name -> File(parent, name).isFile }
+        val requiredPresent = REQUIRED_HDFS.all { name -> File(parent, name).exists() }
         if (!requiredPresent) return null
 
         return AgsInstall(
@@ -134,8 +147,50 @@ object AgsDetector {
         )
     }
 
-    private fun isValidAgsDir(dir: File): Boolean =
-        dir.isDirectory && REQUIRED_HDFS.all { File(dir, it).isFile }
+    private fun isValidAgsDir(dir: File): Boolean {
+        val exists = dir.exists() || dir.path.contains("/storage/") // Trust storage paths if check fails
+        return exists && REQUIRED_HDFS.all { File(dir, it).exists() }
+    }
+
+    private fun agsDriveAssignments(agsDir: File): List<Pair<String, File>> {
+        val knownByFilename = ALL_HDF_MOUNTS.associateBy(
+            keySelector = { (_, filename) -> filename.lowercase() },
+            valueTransform = { (dev, _) -> dev },
+        )
+
+        val knownPresentByDevice = linkedMapOf<String, File>()
+        val extraImages = mutableListOf<File>()
+
+        agsDir.listFiles()?.forEach { file ->
+            if (!file.isFile) return@forEach
+
+            val ext = file.extension.lowercase()
+            if (ext !in AGS_DRIVE_IMAGE_EXTENSIONS) return@forEach
+
+            val mappedDevice = knownByFilename[file.name.lowercase()]
+            if (mappedDevice != null) {
+                knownPresentByDevice[mappedDevice] = file
+            } else {
+                extraImages += file
+            }
+        }
+
+        val ordered = mutableListOf<Pair<String, File>>()
+        AGS_DRIVE_SLOTS.forEach { dev ->
+            knownPresentByDevice[dev]?.let { file ->
+                ordered += dev to file
+            }
+        }
+
+        val usedSlots = ordered.map { (dev, _) -> dev }.toSet()
+        val freeSlots = AGS_DRIVE_SLOTS.filterNot { it in usedSlots }
+        val sortedExtras = extraImages.sortedBy { it.name.lowercase() }
+        freeSlots.zip(sortedExtras).forEach { (dev, file) ->
+            ordered += dev to file
+        }
+
+        return ordered
+    }
 
     private fun findRom(agsDir: File): String? {
         val parent = agsDir.parentFile ?: return null
@@ -150,13 +205,25 @@ object AgsDetector {
     /**
      * Return the ordered list of AGS HDFs present on disk so the Android HDF UI
      * can mount them directly into DH0.. slots.
+     * Also automatically detects and appends the SHARED folder at DH10 if found.
      */
     fun mountableHardDrives(install: AgsInstall): List<String> {
-        val agsPath = install.agsDir.absolutePath
-        return ALL_HDF_MOUNTS.mapNotNull { (_, filename) ->
-            val file = File(agsPath, filename)
-            file.absolutePath.takeIf { file.isFile }
+        val drives = agsDriveAssignments(install.agsDir).map { (_, file) -> file.absolutePath }.toMutableList()
+        
+        // Detect SHARED folder either inside AGS_UAE or as a sibling
+        val sharedDir = File(install.agsDir, "SHARED").let { 
+            if (it.isDirectory) it else File(install.agsDir.parentFile, "SHARED") 
         }
+        
+        if (sharedDir.isDirectory) {
+            // DH10 is index 10. Pad list with empty strings if necessary.
+            while (drives.size < 11) {
+                drives.add("")
+            }
+            drives[10] = sharedDir.absolutePath
+        }
+        
+        return drives
     }
 
     // ── Config generation ────────────────────────────────────────────────────
@@ -220,22 +287,26 @@ object AgsDetector {
         sb.appendLine("nr_floppies=1")
         sb.appendLine("floppy_speed=0")
 
-        // Hard drives — only include files present on disk
-        ALL_HDF_MOUNTS.forEach { (dev, filename) ->
-            val file = File(agsPath, filename)
-            if (file.isFile) {
-                sb.appendLine("hardfile2=rw,$dev:\"${file.absolutePath}\",0,0,0,512,0")
-                if (dev != "DH0") {
-                    sb.appendLine("uaehf${mountIndex}_bootpri=$BOOTPRI_NOAUTOBOOT")
-                }
-                mountIndex++
-            }
+        // Hard drives — mount known AGS files first, then any extra HDF images
+        agsDriveAssignments(install.agsDir).forEach { (dev, file) ->
+            val bootPri = if (dev == "DH0") 0 else BOOTPRI_NOAUTOBOOT
+            sb.appendLine("uaehf$mountIndex=hdf,rw,$dev:\"${file.absolutePath}\",0,0,0,512,$bootPri")
+            sb.appendLine("uaehf${mountIndex}_file=${file.absolutePath}")
+            sb.appendLine("uaehf${mountIndex}_name=$dev")
+            sb.appendLine("uaehf${mountIndex}_bootpri=$bootPri")
+            sb.appendLine("uaehf${mountIndex}_present=true")
+            sb.appendLine("uaehf${mountIndex}_blocksize=512")
+            sb.appendLine("uaehf${mountIndex}_readonly=false")
+            mountIndex++
         }
 
-        val sharedDir = File(agsPath, "SHARED")
+        val sharedDir = File(install.agsDir, "SHARED").let { if (it.isDirectory) it else File(install.agsDir.parentFile, "SHARED") }
         if (sharedDir.isDirectory) {
-            sb.appendLine("filesystem2=rw,$AGS_SHARED_DEVICE:SHARED:\"${sharedDir.absolutePath}\",0")
+            android.util.Log.d("AgsDetector", "Mapping SHARED folder: ${sharedDir.absolutePath}")
+            sb.appendLine("filesystem2=rw,$AGS_SHARED_DEVICE:SHARED:\"${sharedDir.absolutePath}\",$BOOTPRI_NOAUTOBOOT")
             sb.appendLine("uaehf${mountIndex}_bootpri=$BOOTPRI_NOAUTOBOOT")
+        } else {
+            android.util.Log.w("AgsDetector", "SHARED folder not found at ${File(install.agsDir, "SHARED").absolutePath} or sibling")
         }
 
         // Sound
