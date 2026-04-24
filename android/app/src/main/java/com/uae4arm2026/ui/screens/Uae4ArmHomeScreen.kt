@@ -1182,7 +1182,7 @@ private fun DriveIconCard(
     @DrawableRes driveArt: Int,
     currentPath: String,
     onEject: () -> Unit,
-    onClick: () -> Unit,
+    onPickFile: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val fileName = currentPath.substringAfterLast('/').ifBlank { "" }
@@ -1196,7 +1196,7 @@ private fun DriveIconCard(
                 .fillMaxWidth()
                 .border(1.dp, if (hasFile) BorderKick else Color(0x22FFFFFF), RoundedCornerShape(8.dp))
                 .background(if (hasFile) BgKick else Color(0x0AFFFFFF), RoundedCornerShape(8.dp))
-                .clickable(onClick = onClick)
+                .clickable(onClick = onPickFile)
                 .padding(6.dp)
         ) {
             Box(modifier = Modifier.size(56.dp, 42.dp), contentAlignment = Alignment.Center) {
