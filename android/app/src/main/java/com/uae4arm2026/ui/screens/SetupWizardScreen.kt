@@ -3,6 +3,7 @@ package com.uae4arm2026.ui.screens
 import android.net.Uri
 import android.os.Environment
 import android.provider.DocumentsContract
+import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -28,6 +29,7 @@ import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.Button
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -54,12 +56,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
+import com.uae4arm2026.data.AgsDetector
 import com.uae4arm2026.data.AppPreferences
 import com.uae4arm2026.data.FileManager
 import com.uae4arm2026.data.FileRepository
 import com.uae4arm2026.data.model.FileCategory
+import com.uae4arm2026.ui.findActivity
 import com.uae4arm2026.ui.navigation.Screen
+import com.uae4arm2026.ui.viewmodel.SettingsViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -67,345 +73,422 @@ import kotlinx.coroutines.withContext
 private enum class WizardStep { FOLDER_PICK, SCANNING, ASSIGN }
 
 private fun treeUriToWizardPath(uri: Uri): String? = try {
-    val docId = DocumentsContract.getTreeDocumentId(uri)
-    val split = docId.split(":")
-    if (split.size >= 2) {
-        if (split[0] == "primary") "${Environment.getExternalStorageDirectory()}/${split[1]}"
-        else "/storage/${split[0]}/${split[1]}"
-    } else {
-        Environment.getExternalStorageDirectory().absolutePath
-    }
+	val docId = DocumentsContract.getTreeDocumentId(uri)
+	val split = docId.split(":")
+	if (split.size >= 2) {
+		if (split[0] == "primary") "${Environment.getExternalStorageDirectory()}/${split[1]}"
+		else "/storage/${split[0]}/${split[1]}"
+	} else {
+		Environment.getExternalStorageDirectory().absolutePath
+	}
 } catch (_: Exception) { null }
 
 private val FileCategory.icon: ImageVector
-    get() = when (this) {
-        FileCategory.ROMS          -> Icons.Default.Memory
-        FileCategory.FLOPPIES      -> Icons.Default.SaveAlt
-        FileCategory.HARD_DRIVES   -> Icons.Default.Storage
-        FileCategory.CD_IMAGES     -> Icons.Default.Album
-        FileCategory.WHDLOAD_GAMES -> Icons.Default.SportsEsports
-    }
-
-// ─────────────────────────────────────────────────────────────────────────────
+	get() = when (this) {
+		FileCategory.ROMS          -> Icons.Default.Memory
+		FileCategory.FLOPPIES      -> Icons.Default.SaveAlt
+		FileCategory.HARD_DRIVES   -> Icons.Default.Storage
+		FileCategory.CD_IMAGES     -> Icons.Default.Album
+		FileCategory.WHDLOAD_GAMES -> Icons.Default.SportsEsports
+	}
 
 @Composable
 fun SetupWizardScreen(navController: NavController) {
-    val context = LocalContext.current
-    val scope   = rememberCoroutineScope()
-    val prefs   = remember { AppPreferences.getInstance(context) }
+	val context = LocalContext.current
+	val scope   = rememberCoroutineScope()
+	val prefs   = remember { AppPreferences.getInstance(context) }
+	val settingsViewModel: SettingsViewModel = viewModel(
+		context.findActivity() as ComponentActivity
+	)
 
-    var step by remember { mutableStateOf(WizardStep.FOLDER_PICK) }
+	var step by remember { mutableStateOf(WizardStep.FOLDER_PICK) }
 
-    // Per-category folder path assignments (auto-filled + user-editable)
-    val assignedPaths = remember { mutableStateMapOf<FileCategory, String>() }
-    var rootPath by remember { mutableStateOf("") }
+	val assignedPaths = remember { mutableStateMapOf<FileCategory, String>() }
+	var rootPath by remember { mutableStateOf("") }
+	
+	var agsInstall by remember { mutableStateOf<AgsDetector.AgsInstall?>(null) }
 
-    // ── SAF directory picker ──────────────────────────────────────────────────
-    var pickerCallback by remember { mutableStateOf<((Uri, String) -> Unit)?>(null) }
-    val folderPickerLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocumentTree()
-    ) { uri ->
-        if (uri != null) {
-            val path = treeUriToWizardPath(uri) ?: uri.toString()
-            pickerCallback?.invoke(uri, path)
-        }
-        pickerCallback = null
-    }
+	var pickerCallback by remember { mutableStateOf<((Uri, String) -> Unit)?>(null) }
+	val folderPickerLauncher = rememberLauncherForActivityResult(
+		ActivityResultContracts.OpenDocumentTree()
+	) { uri ->
+		if (uri != null) {
+			val path = treeUriToWizardPath(uri) ?: uri.toString()
+			pickerCallback?.invoke(uri, path)
+		}
+		pickerCallback = null
+	}
 
-    fun openPicker(onResult: (Uri, String) -> Unit) {
-        pickerCallback = onResult
-        folderPickerLauncher.launch(null)
-    }
+	fun openPicker(onResult: (Uri, String) -> Unit) {
+		pickerCallback = onResult
+		folderPickerLauncher.launch(null)
+	}
 
-    // ── Finish setup ──────────────────────────────────────────────────────────
-    fun finish() {
-        try {
-            assignedPaths.forEach { (category, path) ->
-                if (path.isNotBlank()) FileManager.setCategoryLibraryPath(context, category, path)
-            }
-            prefs.setHasCompletedSetup(true)
-            prefs.setHasSeenWelcome(true)
-            scope.launch { 
-                try {
-                    FileRepository.getInstance(context).rescan()
-                } catch (e: Exception) {
-                    android.util.Log.e("SetupWizard", "Rescan failed after setup", e)
-                }
-            }
-            navController.navigate(Screen.QuickStart.route) {
-                popUpTo(Screen.Setup.route) { inclusive = true }
-            }
-        } catch (e: Exception) {
-            android.util.Log.e("SetupWizard", "Finish setup failed", e)
-            // Still try to navigate out if possible
-            navController.navigate(Screen.QuickStart.route) {
-                popUpTo(Screen.Setup.route) { inclusive = true }
-            }
-        }
-    }
+	fun finish() {
+		try {
+			assignedPaths.forEach { (category, path) ->
+				if (path.isNotBlank()) FileManager.setCategoryLibraryPath(context, category, path)
+			}
+			
+			if (agsInstall != null) {
+				val drives = AgsDetector.mountableHardDrives(agsInstall!!).ifEmpty { listOf("") }
+				settingsViewModel.applyModel(com.uae4arm2026.data.model.AmigaModel.A1200)
+				settingsViewModel.updateSettings { s ->
+					s.copy(
+						address24Bit = false,
+						cpuSpeed     = "max",
+						cycleExact   = false,
+						fpuModel     = 68882,
+						jitCacheSize = 16384,
+						z3Ram        = 512,
+						useRtg       = true,
+						romFile      = agsInstall!!.romFile ?: s.romFile,
+						hardDrives   = drives
+					)
+				}
+				AgsDetector.writeConfig(
+					context, agsInstall!!,
+					agsInstall!!.romFile,
+					AgsDetector.AGS_WIDESCREEN_RTG_WIDTH,
+					AgsDetector.AGS_WIDESCREEN_RTG_HEIGHT
+				)
+			}
 
-    // ── Parent folder scan ────────────────────────────────────────────────────
-    fun pickParentFolder() {
-        openPicker { uri, path ->
-            FileManager.persistDirectoryAccess(context, uri)
-            rootPath = path
-            step = WizardStep.SCANNING
-            scope.launch {
-                val detected = withContext(Dispatchers.IO) {
-                    FileManager.detectCategoryFolders(context, uri)
-                }
-                assignedPaths.clear()
-                detected.forEach { (category, pair) ->
-                    val (resolvedPath, docUri) = pair
-                    assignedPaths[category] = resolvedPath
-                    FileManager.setCategoryLibraryPath(context, category, resolvedPath, docUri.toString())
-                }
+			prefs.setHasCompletedSetup(true)
+			prefs.setHasSeenWelcome(true)
+			scope.launch { 
+				try {
+					FileRepository.getInstance(context).rescan()
+				} catch (e: Exception) {
+					android.util.Log.e("SetupWizard", "Rescan failed after setup", e)
+				}
+			}
+			navController.navigate(Screen.QuickStart.route) {
+				popUpTo(Screen.Setup.route) { inclusive = true }
+			}
+		} catch (e: Exception) {
+			android.util.Log.e("SetupWizard", "Finish setup failed", e)
+			navController.navigate(Screen.QuickStart.route) {
+				popUpTo(Screen.Setup.route) { inclusive = true }
+			}
+		}
+	}
 
-                if (detected.isNotEmpty()) {
-                    finish()
-                } else {
-                    step = WizardStep.ASSIGN
-                }
-            }
-        }
-    }
+	fun pickParentFolder() {
+		openPicker { uri, path ->
+			FileManager.persistDirectoryAccess(context, uri)
+			rootPath = path
+			step = WizardStep.SCANNING
+			scope.launch {
+				val detected = withContext(Dispatchers.IO) {
+					FileManager.detectCategoryFolders(context, uri)
+				}
+				assignedPaths.clear()
+				detected.forEach { (category, pair) ->
+					val (resolvedPath, docUri) = pair
+					assignedPaths[category] = resolvedPath
+					FileManager.setCategoryLibraryPath(context, category, resolvedPath, docUri.toString())
+				}
+				
+				val ags = withContext(Dispatchers.IO) { AgsDetector.detectFromPath(path) }
+				if (ags != null) {
+					agsInstall = ags
+				}
 
-    Scaffold { padding ->
-        when (step) {
-            WizardStep.FOLDER_PICK ->
-                FolderPickStep(
-                    modifier     = Modifier.fillMaxSize().padding(padding).padding(24.dp),
-                    onPickFolder = { pickParentFolder() },
-                    onSkip       = { finish() }
-                )
-            WizardStep.SCANNING ->
-                ScanningStep(modifier = Modifier.fillMaxSize().padding(padding))
-            WizardStep.ASSIGN ->
-                AssignStep(
-                    modifier       = Modifier.fillMaxSize().padding(padding),
-                    rootPath       = rootPath,
-                    assignedPaths  = assignedPaths,
-                    onPickCategory = { category ->
-                        openPicker { uri, path ->
-                            FileManager.persistDirectoryAccess(context, uri)
-                            assignedPaths[category] = path
-                            FileManager.setCategoryLibraryPath(context, category, path, uri.toString())
-                        }
-                    },
-                    onPickParent   = { pickParentFolder() },
-                    onFinish       = { finish() }
-                )
-        }
-    }
+				if (detected.isNotEmpty() || agsInstall != null) {
+					finish()
+				} else {
+					step = WizardStep.ASSIGN
+				}
+			}
+		}
+	}
+
+	Scaffold { padding ->
+		when (step) {
+			WizardStep.FOLDER_PICK ->
+				FolderPickStep(
+					modifier     = Modifier.fillMaxSize().padding(padding).padding(24.dp),
+					onPickFolder = { pickParentFolder() },
+					onSkip       = { finish() }
+				)
+			WizardStep.SCANNING ->
+				ScanningStep(modifier = Modifier.fillMaxSize().padding(padding))
+			WizardStep.ASSIGN ->
+				AssignStep(
+					modifier       = Modifier.fillMaxSize().padding(padding),
+					rootPath       = rootPath,
+					assignedPaths  = assignedPaths,
+					agsInstall     = agsInstall,
+					onPickAgs      = {
+						openPicker { uri, path ->
+							FileManager.persistDirectoryAccess(context, uri)
+							scope.launch {
+								val ags = withContext(Dispatchers.IO) { AgsDetector.detectFromPath(path) }
+								if (ags != null) {
+									agsInstall = ags
+								}
+							}
+						}
+					},
+					onPickCategory = { category ->
+						openPicker { uri, path ->
+							FileManager.persistDirectoryAccess(context, uri)
+							assignedPaths[category] = path
+							FileManager.setCategoryLibraryPath(context, category, path, uri.toString())
+						}
+					},
+					onPickParent   = { pickParentFolder() },
+					onFinish       = { finish() }
+				)
+		}
+	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Step 1 — FOLDER PICK
-// ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
 private fun FolderPickStep(
-    modifier: Modifier = Modifier,
-    onPickFolder: () -> Unit,
-    onSkip: () -> Unit
+	modifier: Modifier = Modifier,
+	onPickFolder: () -> Unit,
+	onSkip: () -> Unit
 ) {
-    // Auto-launch the picker the first time this step is shown
-    LaunchedEffect(Unit) { onPickFolder() }
+	LaunchedEffect(Unit) { onPickFolder() }
 
-    Column(
-        modifier = modifier.verticalScroll(rememberScrollState()),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Spacer(Modifier.height(24.dp))
-        Icon(
-            Icons.Default.FolderOpen, contentDescription = null,
-            modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary
-        )
-        Spacer(Modifier.height(12.dp))
-        Text(
-            "Pick your Amiga files folder",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold, textAlign = TextAlign.Center
-        )
-        Spacer(Modifier.height(10.dp))
-        Text(
-            "Pick the parent folder that contains your Amiga files. " +
-                "The wizard scans its sub-folders and assigns each to the right category.",
-            style = MaterialTheme.typography.bodyMedium,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(Modifier.height(12.dp))
-        OutlinedCard(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
-                TreeLine("📁 Amiga/",          bold = true)
-                TreeLine("  ├─ 📁 Kickstarts/")
-                TreeLine("  ├─ 📁 Games/")
-                TreeLine("  ├─ 📁 Floppies/")
-                TreeLine("  ├─ 📁 CDs/")
-                TreeLine("  └─ 📁 HardDrives/")
-            }
-        }
-        Spacer(Modifier.height(20.dp))
-        Button(
-            onClick = onPickFolder,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("Browse & Pick Amiga Folder")
-        }
-        TextButton(onClick = onSkip, modifier = Modifier.fillMaxWidth()) {
-            Text("Skip for now")
-        }
-        Spacer(Modifier.height(16.dp))
-    }
+	Column(
+		modifier = modifier.verticalScroll(rememberScrollState()),
+		horizontalAlignment = Alignment.CenterHorizontally
+	) {
+		Spacer(Modifier.height(24.dp))
+		Icon(
+			Icons.Default.FolderOpen, contentDescription = null,
+			modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary
+		)
+		Spacer(Modifier.height(12.dp))
+		Text(
+			"Pick your Amiga files folder",
+			style = MaterialTheme.typography.headlineSmall,
+			fontWeight = FontWeight.Bold, textAlign = TextAlign.Center
+		)
+		Spacer(Modifier.height(10.dp))
+		Text(
+			"Pick the parent folder that contains your Amiga files. " +
+				"The wizard scans its sub-folders and assigns each to the right category.",
+			style = MaterialTheme.typography.bodyMedium,
+			textAlign = TextAlign.Center,
+			color = MaterialTheme.colorScheme.onSurfaceVariant
+		)
+		Spacer(Modifier.height(12.dp))
+		OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+			Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+				TreeLine("📁 Amiga/",          bold = true)
+				TreeLine("  ├─ 📁 Kickstarts/")
+				TreeLine("  ├─ 📁 Games/")
+				TreeLine("  ├─ 📁 Floppies/")
+				TreeLine("  ├─ 📁 CDs/")
+				TreeLine("  └─ 📁 HardDrives/")
+			}
+		}
+		Spacer(Modifier.height(20.dp))
+		Button(
+			onClick = onPickFolder,
+			modifier = Modifier.fillMaxWidth()
+		) {
+			Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+			Spacer(Modifier.width(8.dp))
+			Text("Browse & Pick Amiga Folder")
+		}
+		TextButton(onClick = onSkip, modifier = Modifier.fillMaxWidth()) {
+			Text("Skip for now")
+		}
+		Spacer(Modifier.height(16.dp))
+	}
 }
 
 @Composable
 private fun TreeLine(text: String, bold: Boolean = false) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.bodySmall.copy(
-            fontFamily = FontFamily.Monospace,
-            fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal
-        ),
-        modifier = Modifier.padding(vertical = 1.dp)
-    )
+	Text(
+		text = text,
+		style = MaterialTheme.typography.bodySmall.copy(
+			fontFamily = FontFamily.Monospace,
+			fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal
+		),
+		modifier = Modifier.padding(vertical = 1.dp)
+	)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Step 2 — SCANNING
-// ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
 private fun ScanningStep(modifier: Modifier = Modifier) {
-    Box(modifier = modifier, contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            CircularProgressIndicator(modifier = Modifier.size(56.dp))
-            Spacer(Modifier.height(20.dp))
-            Text("Scanning sub-folders…", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "Matching Kickstarts, games, floppies and more.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 32.dp)
-            )
-        }
-    }
+	Box(modifier = modifier, contentAlignment = Alignment.Center) {
+		Column(horizontalAlignment = Alignment.CenterHorizontally) {
+			CircularProgressIndicator(modifier = Modifier.size(56.dp))
+			Spacer(Modifier.height(20.dp))
+			Text("Scanning sub-folders…", style = MaterialTheme.typography.titleMedium)
+			Spacer(Modifier.height(8.dp))
+			Text(
+				"Matching Kickstarts, games, floppies and more.",
+				style = MaterialTheme.typography.bodyMedium,
+				color = MaterialTheme.colorScheme.onSurfaceVariant,
+				textAlign = TextAlign.Center,
+				modifier = Modifier.padding(horizontal = 32.dp)
+			)
+		}
+	}
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Step 3 — ASSIGN
-// ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
 private fun AssignStep(
-    modifier: Modifier = Modifier,
-    rootPath: String,
-    assignedPaths: Map<FileCategory, String>,
-    onPickCategory: (FileCategory) -> Unit,
-    onPickParent: () -> Unit,
-    onFinish: () -> Unit
+	modifier: Modifier = Modifier,
+	rootPath: String,
+	assignedPaths: Map<FileCategory, String>,
+	agsInstall: AgsDetector.AgsInstall?,
+	onPickAgs: () -> Unit,
+	onPickCategory: (FileCategory) -> Unit,
+	onPickParent: () -> Unit,
+	onFinish: () -> Unit
 ) {
-    Column(
-        modifier = modifier
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        Text(
-            "Assign library folders",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold
-        )
-        if (rootPath.isNotBlank()) {
-            Text(
-                rootPath,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2, overflow = TextOverflow.Ellipsis
-            )
-        }
-        Text(
-            "Each row shows which folder is used for that file type. " +
-                "Tap the 📂 icon on any row to change it.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        HorizontalDivider()
+	Column(
+		modifier = modifier
+			.verticalScroll(rememberScrollState())
+			.padding(horizontal = 20.dp, vertical = 16.dp),
+		verticalArrangement = Arrangement.spacedBy(10.dp)
+	) {
+		Text(
+			"Assign library folders",
+			style = MaterialTheme.typography.headlineSmall,
+			fontWeight = FontWeight.Bold
+		)
+		if (rootPath.isNotBlank()) {
+			Text(
+				rootPath,
+				style = MaterialTheme.typography.bodySmall,
+				color = MaterialTheme.colorScheme.onSurfaceVariant,
+				maxLines = 2, overflow = TextOverflow.Ellipsis
+			)
+		}
+		Text(
+			"Each row shows which folder is used for that file type. " +
+				"Tap any row to change its folder.",
+			style = MaterialTheme.typography.bodyMedium,
+			color = MaterialTheme.colorScheme.onSurfaceVariant
+		)
+		HorizontalDivider()
 
-        FileCategory.entries.forEach { category ->
-            CategoryAssignRow(
-                category   = category,
-                folderPath = assignedPaths[category] ?: "",
-                onPick     = { onPickCategory(category) }
-            )
-        }
+		AgsAssignRow(
+			install = agsInstall,
+			onPick = onPickAgs
+		)
 
-        HorizontalDivider()
-        TextButton(onClick = onPickParent, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("Pick a different parent folder")
-        }
-        Button(onClick = onFinish, modifier = Modifier.fillMaxWidth().height(52.dp)) {
-            Text("Finish Setup", style = MaterialTheme.typography.titleMedium)
-        }
-        Spacer(Modifier.height(16.dp))
-    }
+		FileCategory.entries.forEach { category ->
+			CategoryAssignRow(
+				category   = category,
+				folderPath = assignedPaths[category] ?: "",
+				onPick     = { onPickCategory(category) }
+			)
+		}
+
+		HorizontalDivider()
+		TextButton(onClick = onPickParent, modifier = Modifier.fillMaxWidth()) {
+			Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+			Spacer(Modifier.width(6.dp))
+			Text("Pick a different parent folder")
+		}
+		Button(onClick = onFinish, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+			Text("Finish Setup", style = MaterialTheme.typography.titleMedium)
+		}
+		Spacer(Modifier.height(16.dp))
+	}
+}
+
+@Composable
+private fun AgsAssignRow(
+	install: AgsDetector.AgsInstall?,
+	onPick: () -> Unit
+) {
+	val assigned = install != null
+	OutlinedCard(
+		modifier = Modifier.fillMaxWidth(),
+		onClick = onPick,
+		colors = if (assigned) CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.1f))
+				 else CardDefaults.outlinedCardColors()
+	) {
+		Row(
+			modifier = Modifier.padding(16.dp),
+			verticalAlignment = Alignment.CenterVertically
+		) {
+			Icon(
+				Icons.Default.SportsEsports, contentDescription = null,
+				modifier = Modifier.size(28.dp),
+				tint = if (assigned) MaterialTheme.colorScheme.primary
+					   else MaterialTheme.colorScheme.onSurfaceVariant
+			)
+			Spacer(Modifier.width(12.dp))
+			Column(modifier = Modifier.weight(1f)) {
+				Text(
+					"AGS Amiga Game System",
+					style = MaterialTheme.typography.bodyLarge,
+					fontWeight = FontWeight.SemiBold
+				)
+				Text(
+					if (assigned) install!!.agsDir.absolutePath
+					else "Not found — tap to point to AGS_UAE folder",
+					style = MaterialTheme.typography.bodySmall,
+					color = MaterialTheme.colorScheme.onSurfaceVariant,
+					maxLines = 1, overflow = TextOverflow.Ellipsis
+				)
+			}
+			Icon(
+				if (assigned) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+				contentDescription = null,
+				modifier = Modifier.size(20.dp),
+				tint = if (assigned) MaterialTheme.colorScheme.primary
+					   else MaterialTheme.colorScheme.onSurfaceVariant
+			)
+		}
+	}
 }
 
 @Composable
 private fun CategoryAssignRow(
-    category: FileCategory,
-    folderPath: String,
-    onPick: () -> Unit
+	category: FileCategory,
+	folderPath: String,
+	onPick: () -> Unit
 ) {
-    val assigned = folderPath.isNotBlank()
-    OutlinedCard(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                category.icon, contentDescription = null,
-                modifier = Modifier.size(28.dp),
-                tint = if (assigned) MaterialTheme.colorScheme.primary
-                       else MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    category.displayName,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    if (assigned) folderPath.substringAfterLast('/').ifBlank { folderPath }
-                    else "Not assigned — tap 📂 to set",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis
-                )
-            }
-            Icon(
-                if (assigned) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
-                contentDescription = null,
-                modifier = Modifier.size(20.dp),
-                tint = if (assigned) MaterialTheme.colorScheme.primary
-                       else MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.width(2.dp))
-            IconButton(onClick = onPick) {
-                Icon(
-                    Icons.Default.FolderOpen,
-                    contentDescription = "Pick folder for ${category.displayName}",
-                    tint = MaterialTheme.colorScheme.primary
-                )
-            }
-        }
-    }
+	val assigned = folderPath.isNotBlank()
+	OutlinedCard(
+		modifier = Modifier.fillMaxWidth(),
+		onClick = onPick
+	) {
+		Row(
+			modifier = Modifier.padding(16.dp),
+			verticalAlignment = Alignment.CenterVertically
+		) {
+			Icon(
+				category.icon, contentDescription = null,
+				modifier = Modifier.size(28.dp),
+				tint = if (assigned) MaterialTheme.colorScheme.primary
+					   else MaterialTheme.colorScheme.onSurfaceVariant
+			)
+			Spacer(Modifier.width(12.dp))
+			Column(modifier = Modifier.weight(1f)) {
+				Text(
+					category.displayName,
+					style = MaterialTheme.typography.bodyLarge,
+					fontWeight = FontWeight.SemiBold
+				)
+				Text(
+					if (assigned) folderPath.substringAfterLast('/').ifBlank { folderPath }
+					else "Not assigned — tap to set",
+					style = MaterialTheme.typography.bodySmall,
+					color = MaterialTheme.colorScheme.onSurfaceVariant,
+					maxLines = 1, overflow = TextOverflow.Ellipsis
+				)
+			}
+			Icon(
+				if (assigned) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+				contentDescription = null,
+				modifier = Modifier.size(20.dp),
+				tint = if (assigned) MaterialTheme.colorScheme.primary
+					   else MaterialTheme.colorScheme.onSurfaceVariant
+			)
+		}
+	}
 }

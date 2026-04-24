@@ -33,6 +33,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.FolderOff
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material3.Button
@@ -445,18 +446,37 @@ fun OnboardingScreen(navController: NavController) {
 				// SECTION � AGS import offer (shown as soon as detected,
 				//           independent of folder scan)
 				// -------------------------------------------------------------
-				if (agsChecked && agsInstall != null) {
+				if (agsChecked) {
 					Spacer(Modifier.height(16.dp))
 					HorizontalDivider()
 					Spacer(Modifier.height(16.dp))
 
 					SectionHeader(
 						"2",
-						"Set Up AGS?"
+						"Set Up AGS (Amiga Game System)"
 					)
 
 					Spacer(Modifier.height(8.dp))
-					OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+					OutlinedCard(
+						modifier = Modifier.fillMaxWidth(),
+						onClick = {
+							openPicker { uri ->
+								FileManager.persistDirectoryAccess(context, uri)
+								val path = treeUriToPath(context, uri)
+								if (path != null) {
+									scope.launch {
+										val ags = withContext(Dispatchers.IO) { AgsDetector.detectFromPath(path) }
+										if (ags != null) {
+											agsInstall = ags
+											agsEnabled = true
+										}
+									}
+								}
+							}
+						},
+						colors = if (agsInstall != null) CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.1f))
+								 else CardDefaults.outlinedCardColors()
+					) {
 						Row(
 							modifier          = Modifier.padding(14.dp),
 							verticalAlignment = Alignment.CenterVertically
@@ -464,33 +484,36 @@ fun OnboardingScreen(navController: NavController) {
 							Icon(
 								Icons.Default.SportsEsports,
 								contentDescription = null,
-								tint               = MaterialTheme.colorScheme.primary,
+								tint               = if (agsInstall != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
 								modifier           = Modifier.size(32.dp)
 							)
 							Spacer(Modifier.width(12.dp))
 							Column(modifier = Modifier.weight(1f)) {
 								Text(
-									"Amiga Game Selector found",
+									"Point to AGS_UAE folder",
 									style      = MaterialTheme.typography.bodyMedium,
 									fontWeight = FontWeight.SemiBold
 								)
 								Text(
-									agsInstall!!.agsDir.absolutePath,
+									if (agsInstall != null) agsInstall!!.agsDir.absolutePath 
+									else "Tap to select your AGS_UAE directory",
 									style    = MaterialTheme.typography.labelSmall,
 									color    = MaterialTheme.colorScheme.onSurfaceVariant,
 									maxLines = 1,
 									overflow = TextOverflow.Ellipsis
 								)
 							}
-							Switch(
-								checked         = agsEnabled,
-								onCheckedChange = { agsEnabled = it }
+							Icon(
+								if (agsInstall != null) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+								contentDescription = null,
+								modifier = Modifier.size(24.dp),
+								tint = if (agsInstall != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
 							)
 						}
 					}
 					Spacer(Modifier.height(4.dp))
 					Text(
-						"Enable to import AGS and launch it from the home screen.",
+						"Required to enable the AGS Banner and one-click launch from Home.",
 						style     = MaterialTheme.typography.labelSmall,
 						color     = MaterialTheme.colorScheme.onSurfaceVariant,
 						textAlign = TextAlign.Center,

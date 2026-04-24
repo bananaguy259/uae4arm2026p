@@ -1,5 +1,6 @@
 package com.uae4arm2026.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.CloudDownload
@@ -75,7 +77,7 @@ fun ArchiveDownloadsPane(
 	val isPreparingRemote by viewModel.isPreparingRemote.collectAsState()
 	val remotePreparationProgress by viewModel.remotePreparationProgress.collectAsState()
 
-	var selectedSourceIndex by rememberSaveable { mutableIntStateOf(0) }
+	var selectedSourceIndex by rememberSaveable { mutableIntStateOf(1) } // Default to ADF games
 	var selectedLetter by rememberSaveable { mutableStateOf("A") }
 	var searchQuery by rememberSaveable { mutableStateOf("") }
 	var selectedGroupTitle by rememberSaveable(selectedSourceIndex, selectedLetter) { mutableStateOf<String?>(null) }
@@ -124,17 +126,16 @@ fun ArchiveDownloadsPane(
 		emptyList()
 	}
 	val selectedGroup = filteredGroups.firstOrNull { it.title == selectedGroupTitle }
-	val useGroupedAdfList =
-		selectedCollection.category == FileCategory.FLOPPIES &&
-		searchQuery.isBlank() &&
-		selectedGroup == null &&
-		groupedRemoteFiles.isNotEmpty()
+	
+	// FORCE DISABLE GROUPING TO REVEAL LINKS
+	val useGroupedAdfList = false 
+
 	val filteredFiles = when {
 		selectedCollection.category == FileCategory.FLOPPIES && selectedGroup != null -> selectedGroup.items
 		selectedCollection.category == FileCategory.FLOPPIES && searchQuery.isNotBlank() ->
 			remoteFiles.filter { it.fileName.contains(searchQuery, ignoreCase = true) }
 		selectedCollection.category == FileCategory.FLOPPIES && groupedRemoteFiles.isEmpty() -> remoteFiles
-		selectedCollection.category == FileCategory.FLOPPIES -> emptyList()
+		selectedCollection.category == FileCategory.FLOPPIES -> remoteFiles // Show flat list
 		searchQuery.isBlank() -> remoteFiles
 		else -> remoteFiles.filter { it.fileName.contains(searchQuery, ignoreCase = true) }
 	}
@@ -182,61 +183,33 @@ fun ArchiveDownloadsPane(
 	Column(
 		modifier = modifier.fillMaxSize()
 	) {
-		if (remoteFiles.size > 12 || searchQuery.isNotBlank() || selectedCollection.category == FileCategory.FLOPPIES) {
-			OutlinedTextField(
+		Box(
+			modifier = Modifier
+				.fillMaxWidth()
+				.padding(horizontal = 16.dp, vertical = 4.dp)
+				.height(32.dp)
+				.background(MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.small)
+				.padding(horizontal = 12.dp),
+			contentAlignment = Alignment.CenterStart
+		) {
+			if (searchQuery.isEmpty()) {
+				Text(
+					text = searchPlaceholder,
+					style = MaterialTheme.typography.bodySmall,
+					color = MaterialTheme.colorScheme.onSurfaceVariant
+				)
+			}
+			BasicTextField(
 				value = searchQuery,
 				onValueChange = {
 					searchQuery = it
 					selectedGroupTitle = null
 					visibleItemCount = REMOTE_BATCH_SIZE
 				},
-				modifier = Modifier
-					.fillMaxWidth()
-					.padding(horizontal = 16.dp, vertical = 2.dp),
-				placeholder = { Text(searchPlaceholder) },
-				singleLine = true
+				modifier = Modifier.fillMaxWidth(),
+				singleLine = true,
+				textStyle = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurface)
 			)
-		}
-
-		Row(
-			modifier = Modifier
-				.fillMaxWidth()
-				.padding(horizontal = 16.dp, vertical = 6.dp),
-			verticalAlignment = Alignment.CenterVertically
-		) {
-			Icon(
-				Icons.Default.CloudDownload,
-				contentDescription = null,
-				modifier = Modifier.size(18.dp),
-				tint = MaterialTheme.colorScheme.primary
-			)
-			Spacer(modifier = Modifier.width(8.dp))
-			Column(modifier = Modifier.weight(1f)) {
-				Text(
-					text = if (selectedCollection.category == FileCategory.ROMS) {
-						stringResource(R.string.downloads_source_kickstarts)
-					} else {
-						stringResource(R.string.downloads_source_games)
-					},
-					style = MaterialTheme.typography.titleSmall
-				)
-				Text(
-					text = activeListing?.archiveTitle ?: selectedCollection.fallbackTitle,
-					style = MaterialTheme.typography.labelSmall,
-					color = MaterialTheme.colorScheme.onSurfaceVariant,
-					maxLines = 1,
-					overflow = TextOverflow.Ellipsis
-				)
-			}
-			IconButton(
-				onClick = { viewModel.selectArchiveCollection(selectedCollection, forceRefresh = true) },
-				modifier = Modifier.size(36.dp)
-			) {
-				Icon(
-					Icons.Default.Refresh,
-					contentDescription = stringResource(R.string.action_refresh)
-				)
-			}
 		}
 
 		if (activeDownload != null) {
@@ -270,26 +243,23 @@ fun ArchiveDownloadsPane(
 		LazyRow(
 			modifier = Modifier
 				.fillMaxWidth()
-				.padding(horizontal = 16.dp, vertical = 4.dp),
-			horizontalArrangement = Arrangement.spacedBy(8.dp),
-			contentPadding = PaddingValues(end = 16.dp)
+				.padding(horizontal = 16.dp),
+			horizontalArrangement = Arrangement.spacedBy(4.dp),
+			verticalAlignment = Alignment.CenterVertically,
+			contentPadding = PaddingValues(vertical = 2.dp)
 		) {
 			items(sourceTabs.size) { index ->
-				val title = sourceTabs[index]
+				val title = if (index == 0) "Kickstarts" else "Games"
 				FilterChip(
 					selected = selectedSourceIndex == index,
 					onClick = { selectedSourceIndex = index },
-					label = { Text(title) },
-					leadingIcon = {
-						Icon(
-							if (index == 0) Icons.Default.Memory else Icons.Default.SaveAlt,
-							contentDescription = null,
-							modifier = Modifier.size(16.dp)
-						)
-					}
+					label = { Text(title, style = MaterialTheme.typography.labelSmall) },
+					modifier = Modifier.height(28.dp)
 				)
 			}
+			
 			if (selectedSourceIndex == 1) {
+				item { Spacer(modifier = Modifier.width(8.dp)) }
 				items(
 					items = ArchiveCatalog.adfCollections,
 					key = { collection -> collection.id }
@@ -298,7 +268,8 @@ fun ArchiveDownloadsPane(
 					FilterChip(
 						selected = selectedLetter == letter,
 						onClick = { selectedLetter = letter },
-						label = { Text(letter) }
+						label = { Text(letter, style = MaterialTheme.typography.labelSmall) },
+						modifier = Modifier.height(28.dp)
 					)
 				}
 			}

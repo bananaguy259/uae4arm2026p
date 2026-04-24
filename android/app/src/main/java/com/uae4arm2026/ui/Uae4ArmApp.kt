@@ -24,7 +24,6 @@ import com.uae4arm2026.ui.navigation.Screen
 import com.uae4arm2026.ui.screens.AboutScreen
 import com.uae4arm2026.ui.screens.ConfigurationsScreen
 import com.uae4arm2026.ui.screens.FileManagerScreen
-import com.uae4arm2026.ui.screens.OnboardingScreen
 import com.uae4arm2026.ui.screens.SetupWizardScreen
 import com.uae4arm2026.ui.screens.Uae4ArmHomeScreen
 import com.uae4arm2026.ui.screens.settings.SettingsScreen
@@ -87,7 +86,7 @@ private fun Uae4ArmNavHost(navController: NavHostController, modifier: Modifier 
 		val hasAllLibraries = FileCategory.entries.all {
 			FileManager.getCategoryLibraryPath(context, it) != null
 		}
-		if (hasAllLibraries) Screen.QuickStart.route else Screen.Onboarding.route
+		if (hasAllLibraries) Screen.QuickStart.route else Screen.Setup.route
 	}
 
 	NavHost(
@@ -100,14 +99,18 @@ private fun Uae4ArmNavHost(navController: NavHostController, modifier: Modifier 
 		composable(Screen.Setup.route) {
 			SetupWizardScreen(navController = navController)
 		}
-		composable(Screen.Onboarding.route) {
-			OnboardingScreen(navController = navController)
-		}
 		composable(Screen.QuickStart.route) {
 			Uae4ArmHomeScreen(navController = navController)
 		}
 		composable(Screen.About.route) {
-			AboutScreen(onBack = { navController.popBackStack() })
+			AboutScreen(
+				onBack = { navController.popBackStack() },
+				onRunWizard = {
+					navController.navigate(Screen.Setup.route) {
+						popUpTo(Screen.QuickStart.route)
+					}
+				}
+			)
 		}
 		composable(Screen.Settings.route) {
 			SettingsScreen(navController = navController)

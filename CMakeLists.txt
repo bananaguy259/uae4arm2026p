@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(uae4arm
-    VERSION 4.1.2
+    VERSION 4.1.3
     LANGUAGES C CXX
     DESCRIPTION "UAE4ARM 2026 - Amiga emulator for Android"
     HOMEPAGE_URL "https://github.com/CrownParkComputing/uae4arm_2026"

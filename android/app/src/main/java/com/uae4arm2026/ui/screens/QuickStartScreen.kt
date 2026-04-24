@@ -448,7 +448,7 @@ private fun KickstartStatusRow(
                 )
                 if (settings.romFile.isNotBlank()) {
                     Text(
-                        text     = settings.romFile.substringAfterLast('/'),
+                        text     = android.net.Uri.decode(settings.romFile.substringAfterLast('/')),
                         style    = MaterialTheme.typography.bodySmall,
                         color    = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,

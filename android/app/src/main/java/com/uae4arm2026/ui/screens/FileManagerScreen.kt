@@ -1,15 +1,13 @@
 package com.uae4arm2026.ui.screens
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
-import android.content.Intent
 import android.net.Uri
 import android.os.Environment
 import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,36 +19,25 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Album
-import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.CreateNewFolder
-import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.Memory
-import androidx.compose.material.icons.filled.SaveAlt
-import androidx.compose.material.icons.filled.SportsEsports
-import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedCard
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SecondaryScrollableTabRow
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -61,25 +48,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.uae4arm2026.R
 import com.uae4arm2026.data.FileManager
 import com.uae4arm2026.data.model.AmigaFile
 import com.uae4arm2026.data.model.FileCategory
 import com.uae4arm2026.ui.components.StoragePermissionBanner
-import com.uae4arm2026.ui.dpadFocusIndicator
 import com.uae4arm2026.ui.viewmodel.FileManagerViewModel
-import java.util.Locale
-import kotlinx.coroutines.launch
 
 private fun pathToInitialUri(path: String): Uri? {
 	val extRoot = Environment.getExternalStorageDirectory().absolutePath
@@ -101,28 +84,24 @@ private fun pathToInitialUri(path: String): Uri? {
 fun FileManagerScreen(
 	initialSection: Int = 0,
 	showSectionTabs: Boolean = true,
-	showTopBar: Boolean = true,
+	@Suppress("UNUSED_PARAMETER") showTopBar: Boolean = true,
 	viewModel: FileManagerViewModel = viewModel()
 ) {
 	val context = LocalContext.current
-	val scope = rememberCoroutineScope()
 	val snackbarHostState = remember { SnackbarHostState() }
 	var selectedSection by rememberSaveable { mutableIntStateOf(initialSection.coerceIn(0, 1)) }
 	var selectedTab by rememberSaveable { mutableIntStateOf(0) }
 	val showingDownloads = selectedSection == 1
 
 	val tabs = listOf(
-		TabInfo(FileCategory.ROMS, stringResource(R.string.file_manager_tab_roms), Icons.Default.Memory),
-		TabInfo(FileCategory.WHDLOAD_GAMES, stringResource(R.string.file_manager_tab_whdload), Icons.Default.SportsEsports),
-		TabInfo(FileCategory.FLOPPIES, stringResource(R.string.file_manager_tab_floppies), Icons.Default.SaveAlt),
-		TabInfo(FileCategory.HARD_DRIVES, stringResource(R.string.file_manager_tab_hard_drives), Icons.Default.Storage),
-		TabInfo(FileCategory.CD_IMAGES, stringResource(R.string.file_manager_tab_cds), Icons.Default.Album)
+		TabInfo(FileCategory.ROMS, "Kickstarts"),
+		TabInfo(FileCategory.WHDLOAD_GAMES, "WHDLoad"),
+		TabInfo(FileCategory.FLOPPIES, "Floppies"),
+		TabInfo(FileCategory.HARD_DRIVES, "HDF"),
+		TabInfo(FileCategory.CD_IMAGES, "CD")
 	)
-	val pathCopiedMessage = stringResource(R.string.msg_path_copied)
-	val clipboardLabelPath = stringResource(R.string.clipboard_label_path)
-
+	
 	var searchQuery by rememberSaveable { mutableStateOf("") }
-
 	val currentCategory = tabs[selectedTab].category
 	val allFiles by when (currentCategory) {
 		FileCategory.ROMS -> viewModel.roms
@@ -132,11 +111,6 @@ fun FileManagerScreen(
 		FileCategory.WHDLOAD_GAMES -> viewModel.whdloadGames
 	}.collectAsState()
 
-	// Clear search when the bar would be hidden (≤5 files)
-	if (allFiles.size <= 5 && searchQuery.isNotEmpty()) {
-		searchQuery = ""
-	}
-
 	val files = if (searchQuery.isBlank()) allFiles
 		else allFiles.filter { it.name.contains(searchQuery, ignoreCase = true) }
 
@@ -144,28 +118,13 @@ fun FileManagerScreen(
 	val isScanning by viewModel.isScanning.collectAsState()
 	val isImporting by viewModel.isImporting.collectAsState()
 	val showProgress = isScanning || isImporting
-	val filePickerLauncher = rememberLauncherForActivityResult(
-		contract = ActivityResultContracts.StartActivityForResult()
-	) { result ->
-		val uris = mutableListOf<Uri>()
-		result.data?.let { data ->
-			data.clipData?.let { clip ->
-				for (i in 0 until clip.itemCount) {
-					clip.getItemAt(i).uri?.let { uris.add(it) }
-				}
-			} ?: data.data?.let { uris.add(it) }
-		}
-		if (uris.isNotEmpty()) {
-			viewModel.importFiles(uris, currentCategory)
-		}
-	}
+	
 	val folderPickerLauncher = rememberLauncherForActivityResult(
 		contract = ActivityResultContracts.OpenDocumentTree()
 	) { uri ->
 		viewModel.setCategoryLibraryPath(currentCategory, uri)
 	}
 	val currentLibraryPath = viewModel.getCategoryLibraryPath(currentCategory)
-	val hasAnyLibraryPath = FileCategory.entries.any { viewModel.getCategoryLibraryPath(it) != null }
 
 	fun launchFolderPicker() {
 		val dir = FileManager.getEffectiveCategoryDir(context, currentCategory)
@@ -180,16 +139,8 @@ fun FileManagerScreen(
 		}
 	}
 
-	LaunchedEffect(showingDownloads) {
-		if (showingDownloads) {
-			viewModel.primeAdfGroupsOnFirstDownloadsVisit()
-		}
-	}
-
 	Scaffold(
-		snackbarHost = { SnackbarHost(snackbarHostState) },
-		topBar = {},
-		floatingActionButton = {}
+		snackbarHost = { SnackbarHost(snackbarHostState) }
 	) { innerPadding ->
 		Column(
 			modifier = Modifier
@@ -200,19 +151,53 @@ fun FileManagerScreen(
 				modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
 			)
 
+			// ULTRA COMPACT SEARCH BAR (Matches Downloads)
+			Box(
+				modifier = Modifier
+					.fillMaxWidth()
+					.padding(horizontal = 16.dp, vertical = 4.dp)
+					.height(32.dp)
+					.background(MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.small)
+					.padding(horizontal = 12.dp),
+				contentAlignment = Alignment.CenterStart
+			) {
+				if (searchQuery.isEmpty()) {
+					Text(
+						text = stringResource(R.string.search_placeholder),
+						style = MaterialTheme.typography.bodySmall,
+						color = MaterialTheme.colorScheme.onSurfaceVariant
+					)
+				}
+				BasicTextField(
+					value = searchQuery,
+					onValueChange = { searchQuery = it },
+					modifier = Modifier.fillMaxWidth(),
+					singleLine = true,
+					textStyle = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurface)
+				)
+			}
+
+			// COMPACT SECTION TABS (Library / Downloads)
 			if (showSectionTabs) {
-				SecondaryScrollableTabRow(
-					selectedTabIndex = selectedSection,
-					modifier = Modifier.fillMaxWidth()
+				LazyRow(
+					modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+					horizontalArrangement = Arrangement.spacedBy(8.dp),
+					contentPadding = PaddingValues(vertical = 4.dp)
 				) {
-					listOf(
-						stringResource(R.string.file_manager_section_library),
-						stringResource(R.string.file_manager_section_downloads)
-					).forEachIndexed { index, title ->
-						Tab(
-							selected = selectedSection == index,
-							onClick = { selectedSection = index },
-							text = { Text(title) }
+					item {
+						FilterChip(
+							selected = selectedSection == 0,
+							onClick = { selectedSection = 0 },
+							label = { Text("Library", style = MaterialTheme.typography.labelSmall) },
+							modifier = Modifier.height(28.dp)
+						)
+					}
+					item {
+						FilterChip(
+							selected = selectedSection == 1,
+							onClick = { selectedSection = 1 },
+							label = { Text("Downloads", style = MaterialTheme.typography.labelSmall) },
+							modifier = Modifier.height(28.dp)
 						)
 					}
 				}
@@ -224,168 +209,62 @@ fun FileManagerScreen(
 					modifier = Modifier.weight(1f)
 				)
 			} else {
-				OutlinedCard(
-					modifier = Modifier
-						.fillMaxWidth()
-						.padding(horizontal = 16.dp, vertical = 8.dp)
+				// COMPACT CATEGORY TABS (No Icons)
+				LazyRow(
+					modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+					horizontalArrangement = Arrangement.spacedBy(4.dp),
+					contentPadding = PaddingValues(vertical = 2.dp)
 				) {
-					Row(
-						modifier = Modifier
-							.fillMaxWidth()
-							.padding(horizontal = 12.dp, vertical = 8.dp),
-						verticalAlignment = Alignment.CenterVertically,
-						horizontalArrangement = Arrangement.SpaceBetween
-					) {
-						Column(modifier = Modifier.weight(1f)) {
-							Row(verticalAlignment = Alignment.CenterVertically) {
-								Icon(
-									Icons.Default.FolderOpen,
-									contentDescription = null,
-									modifier = Modifier.size(16.dp)
-								)
-								Spacer(modifier = Modifier.width(6.dp))
-								Text(
-									"Library folder",
-									style = MaterialTheme.typography.labelMedium
-								)
-							}
-							Text(
-								text = currentLibraryPath ?: viewModel.getStoragePath(),
-								style = MaterialTheme.typography.bodySmall,
-								fontFamily = FontFamily.Monospace,
-								color = MaterialTheme.colorScheme.onSurfaceVariant,
-								maxLines = 1
-							)
-							if (currentLibraryPath == null) {
-								Text(
-									text = "No external folder selected for ${tabs[selectedTab].title.lowercase(Locale.getDefault())}. Direct picks will still work.",
-									style = MaterialTheme.typography.bodySmall,
-									color = MaterialTheme.colorScheme.onSurfaceVariant
-								)
-							}
-						}
-
-						Row(verticalAlignment = Alignment.CenterVertically) {
-							IconButton(onClick = { launchFolderPicker() }) {
-								Icon(
-									Icons.Default.CreateNewFolder,
-									contentDescription = "Pick library folder",
-									modifier = Modifier.size(18.dp)
-								)
-							}
-							if (hasAnyLibraryPath) {
-								IconButton(onClick = { viewModel.clearAllCategoryLibraryPaths() }) {
-									Icon(
-										Icons.Default.Clear,
-										contentDescription = "Reset library parent folder",
-										modifier = Modifier.size(18.dp)
-									)
-								}
-							}
-							if (currentLibraryPath != null) {
-								IconButton(onClick = { viewModel.clearCategoryLibraryPath(currentCategory) }) {
-									Icon(
-										Icons.Default.Delete,
-										contentDescription = "Clear library folder",
-										modifier = Modifier.size(18.dp)
-									)
-								}
-							}
-							IconButton(
-								onClick = {
-									val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-									clipboard.setPrimaryClip(ClipData.newPlainText(clipboardLabelPath, currentLibraryPath ?: viewModel.getStoragePath()))
-									scope.launch { snackbarHostState.showSnackbar(pathCopiedMessage) }
-								}
-							) {
-								Icon(
-									Icons.Default.ContentCopy,
-									contentDescription = stringResource(R.string.file_manager_copy_path),
-									modifier = Modifier.size(18.dp)
-								)
-							}
-						}
-					}
-				}
-
-				SecondaryScrollableTabRow(
-					selectedTabIndex = selectedTab,
-					modifier = Modifier
-						.fillMaxWidth()
-						.focusGroup()
-				) {
-					tabs.forEachIndexed { index, tab ->
-						Tab(
+					items(tabs.size) { index ->
+						FilterChip(
 							selected = selectedTab == index,
 							onClick = { selectedTab = index; searchQuery = "" },
-							text = { Text(tab.title) },
-							icon = { Icon(tab.icon, contentDescription = tab.title, modifier = Modifier.size(18.dp)) }
+							label = { Text(tabs[index].title, style = MaterialTheme.typography.labelSmall) },
+							modifier = Modifier.height(28.dp)
 						)
 					}
 				}
 
-				if (allFiles.size > 5) {
-					OutlinedTextField(
-						value = searchQuery,
-						onValueChange = { searchQuery = it },
-						modifier = Modifier
-							.fillMaxWidth()
-							.padding(horizontal = 16.dp, vertical = 4.dp),
-						placeholder = { Text(stringResource(R.string.search_placeholder)) },
-						leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
-						trailingIcon = {
-							if (searchQuery.isNotEmpty()) {
-								IconButton(onClick = { searchQuery = "" }) {
-									Icon(Icons.Default.Clear, contentDescription = null, modifier = Modifier.size(18.dp))
-								}
-							}
-						},
-						singleLine = true
+				// MINIMAL LIBRARY HEADER
+				Row(
+					modifier = Modifier
+						.fillMaxWidth()
+						.padding(horizontal = 16.dp, vertical = 4.dp),
+					verticalAlignment = Alignment.CenterVertically
+				) {
+					Text(
+						text = currentLibraryPath ?: "Default Storage",
+						style = MaterialTheme.typography.labelSmall,
+						fontFamily = FontFamily.Monospace,
+						color = MaterialTheme.colorScheme.onSurfaceVariant,
+						maxLines = 1,
+						overflow = TextOverflow.Ellipsis,
+						modifier = Modifier.weight(1f)
 					)
+					IconButton(onClick = { launchFolderPicker() }, modifier = Modifier.size(24.dp)) {
+						Icon(Icons.Default.CreateNewFolder, contentDescription = null, modifier = Modifier.size(16.dp))
+					}
+					if (currentLibraryPath != null) {
+						IconButton(onClick = { viewModel.clearCategoryLibraryPath(currentCategory) }, modifier = Modifier.size(24.dp)) {
+							Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+						}
+					}
 				}
 
 				if (showProgress) {
 					LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
 				}
 
-				if (files.isEmpty() && !isScanning) {
-					Box(
-						modifier = Modifier
-							.fillMaxSize()
-							.padding(32.dp),
-						contentAlignment = Alignment.Center
-					) {
-						Column(horizontalAlignment = Alignment.CenterHorizontally) {
-							Text(
-								text = stringResource(
-									R.string.file_manager_no_files_found,
-									tabs[selectedTab].title.lowercase(Locale.getDefault())
-								),
-								style = MaterialTheme.typography.bodyLarge
-							)
-							Spacer(modifier = Modifier.height(8.dp))
-							Text(
-								text = stringResource(
-									R.string.file_manager_empty_help,
-									viewModel.getStoragePath(),
-									currentCategory.dirName
-								),
-								style = MaterialTheme.typography.bodySmall,
-								color = MaterialTheme.colorScheme.onSurfaceVariant
-							)
-						}
-					}
-				} else {
-					LazyColumn(
-						contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-						verticalArrangement = Arrangement.spacedBy(6.dp)
-					) {
-						items(files, key = { it.path }) { file ->
-							FileItem(
-								file = file,
-								onDelete = { viewModel.deleteFile(file) }
-							)
-						}
+				LazyColumn(
+					modifier = Modifier.weight(1f),
+					contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+					verticalArrangement = Arrangement.spacedBy(2.dp)
+				) {
+					items(files, key = { it.path }) { file ->
+						FileItemMinimal(
+							file = file,
+							onDelete = { viewModel.deleteFile(file) }
+						)
 					}
 				}
 			}
@@ -394,68 +273,56 @@ fun FileManagerScreen(
 }
 
 @Composable
-private fun FileItem(file: AmigaFile, onDelete: () -> Unit) {
+private fun FileItemMinimal(file: AmigaFile, onDelete: () -> Unit) {
 	var showDeleteDialog by remember { mutableStateOf(false) }
 
-	Card(modifier = Modifier.fillMaxWidth().dpadFocusIndicator()) {
-		Row(
-			modifier = Modifier
-				.fillMaxWidth()
-				.padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 4.dp),
-			verticalAlignment = Alignment.CenterVertically
-		) {
-			val icon = when (file.category) {
-				FileCategory.ROMS -> Icons.Default.Memory
-				FileCategory.FLOPPIES -> Icons.Default.SaveAlt
-				FileCategory.HARD_DRIVES -> Icons.Default.Storage
-				FileCategory.CD_IMAGES -> Icons.Default.Album
-				FileCategory.WHDLOAD_GAMES -> Icons.Default.SportsEsports
-			}
-			Icon(
-				icon,
-				contentDescription = null,
-				modifier = Modifier.size(28.dp),
-				tint = MaterialTheme.colorScheme.primary
+	Row(
+		modifier = Modifier
+			.fillMaxWidth()
+			.height(36.dp)
+			.clickable { /* Pick logic handled elsewhere or via Home */ }
+			.padding(horizontal = 4.dp),
+		verticalAlignment = Alignment.CenterVertically
+	) {
+		Column(modifier = Modifier.weight(1f)) {
+			Text(
+				text = file.name, 
+				style = MaterialTheme.typography.bodySmall,
+				maxLines = 1,
+				overflow = TextOverflow.Ellipsis
 			)
-			Spacer(modifier = Modifier.width(12.dp))
-			Column(modifier = Modifier.weight(1f)) {
-				Text(text = file.name, style = MaterialTheme.typography.bodyMedium)
-				Text(
-					text = file.sizeDisplay,
-					style = MaterialTheme.typography.bodySmall,
-					color = MaterialTheme.colorScheme.onSurfaceVariant
-				)
-			}
-			IconButton(onClick = { showDeleteDialog = true }) {
-				Icon(
-					Icons.Default.Delete,
-					contentDescription = stringResource(R.string.action_delete),
-					modifier = Modifier.size(20.dp),
-					tint = MaterialTheme.colorScheme.onSurfaceVariant
-				)
-			}
+			Text(
+				text = file.sizeDisplay,
+				style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+				color = MaterialTheme.colorScheme.onSurfaceVariant
+			)
+		}
+		IconButton(onClick = { showDeleteDialog = true }, modifier = Modifier.size(24.dp)) {
+			Icon(
+				Icons.Default.Delete,
+				contentDescription = null,
+				modifier = Modifier.size(14.dp),
+				tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+			)
 		}
 	}
 
 	if (showDeleteDialog) {
 		AlertDialog(
 			onDismissRequest = { showDeleteDialog = false },
-			title = { Text(stringResource(R.string.file_manager_delete_title)) },
-			text = { Text(stringResource(R.string.file_manager_delete_message, file.name)) },
+			title = { Text("Delete file?") },
+			text = { Text("Delete ${file.name}?") },
 			confirmButton = {
 				TextButton(onClick = {
 					onDelete()
 					showDeleteDialog = false
 				}) {
-					Text(
-						stringResource(R.string.action_delete),
-						color = MaterialTheme.colorScheme.error
-					)
+					Text("Delete", color = MaterialTheme.colorScheme.error)
 				}
 			},
 			dismissButton = {
 				TextButton(onClick = { showDeleteDialog = false }) {
-					Text(stringResource(R.string.action_cancel))
+					Text("Cancel")
 				}
 			}
 		)
@@ -464,7 +331,5 @@ private fun FileItem(file: AmigaFile, onDelete: () -> Unit) {
 
 private data class TabInfo(
 	val category: FileCategory,
-	val title: String,
-	val icon: ImageVector
+	val title: String
 )
-

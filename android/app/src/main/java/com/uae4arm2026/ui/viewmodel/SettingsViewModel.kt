@@ -125,9 +125,14 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 		val selectedRoms = selectRomsForModel(model, roms)
 		// Prefer a CRC-matched Kickstart; fall back to the first available ROM file
 		// so users with unrecognised or custom ROMs aren't left with a blank kickstart.
+		// EXCLUDE "amigavision" from generic fallbacks as it is specialized.
 		val kickPath = selectedRoms.kick?.path
-			?: roms.firstOrNull { it.extension == "rom" }?.path
-			?: roms.firstOrNull()?.path
+			?: roms.firstOrNull { 
+				it.extension == "rom" && !it.name.lowercase().contains("amigavision") 
+			}?.path
+			?: roms.firstOrNull { 
+				!it.name.lowercase().contains("amigavision") 
+			}?.path
 
 		var updated = settings
 		if (settings.romFile.isBlank() && kickPath != null) {
@@ -144,41 +149,83 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 	}
 
 	private fun selectRomsForModel(model: AmigaModel, roms: List<AmigaFile>): SelectedRoms {
-		if (roms.isEmpty()) return SelectedRoms(null, null)
+		val filteredRoms = roms.filter { !it.name.lowercase().contains("amigavision") }
+		if (filteredRoms.isEmpty()) return SelectedRoms(null, null)
 		val profile = MODEL_ROM_PROFILE[model] ?: return SelectedRoms(null, null)
 
-		val romsById = roms
-			.mapNotNull { rom -> detectRomId(rom)?.let { id -> id to rom } }
-			.groupBy({ it.first }, { it.second })
-
-		val selectedKickId = profile.kickIds.firstOrNull { id -> !romsById[id].isNullOrEmpty() }
-		val kick = selectedKickId?.let { id -> pickDeterministic(romsById[id].orEmpty()) }
-
-		if (kick == null) {
-			return SelectedRoms(null, null)
+		// First, try to find a CRC-matched Kickstart
+		val romsWithIds = filteredRoms.map { it to detectRomId(it) }
+		
+		val crcMatchedKick = profile.kickIds.firstNotNullOfOrNull { id ->
+			romsWithIds.filter { it.second == id }.map { it.first }.sortedBy { it.name.lowercase() }.firstOrNull()
 		}
 
-		val ext = when (model) {
+		if (crcMatchedKick != null) {
+			val ext = findExtRom(model, profile, romsWithIds, profile.kickIds.first { id -> 
+				romsWithIds.any { it.first == crcMatchedKick && it.second == id } 
+			})
+			return SelectedRoms(crcMatchedKick, ext)
+		}
+
+		// Fallback: Try to match by filename if no CRC match found
+		val modelKeywords = when (model) {
+			AmigaModel.A500 -> listOf("a500", "kick13")
+			AmigaModel.A500_PLUS -> listOf("a500plus", "a500+", "kick204")
+			AmigaModel.A600 -> listOf("a600", "kick205", "kick37")
+			AmigaModel.A1000 -> listOf("a1000")
+			AmigaModel.A2000 -> listOf("a2000")
+			AmigaModel.A3000 -> listOf("a3000")
+			AmigaModel.A1200 -> listOf("a1200", "kick30", "kick31")
+			AmigaModel.A4000 -> listOf("a4000")
+			AmigaModel.CD32 -> listOf("cd32")
+			AmigaModel.CDTV -> listOf("cdtv")
+		}
+
+		val nameMatchedKick = roms.filter { rom ->
+			val name = rom.name.lowercase()
+			modelKeywords.any { name.contains(it) } && !name.contains("ext")
+		}.sortedBy { it.name.lowercase() }.firstOrNull()
+
+		if (nameMatchedKick != null) {
+			val ext = findExtRom(model, profile, romsWithIds, -1) // -1 since not a CRC match
+			return SelectedRoms(nameMatchedKick, ext)
+		}
+
+		return SelectedRoms(null, null)
+	}
+
+	private fun findExtRom(
+		model: AmigaModel, 
+		profile: ModelRomProfile, 
+		romsWithIds: List<Pair<AmigaFile, Int?>>,
+		selectedKickId: Int
+	): AmigaFile? {
+		return when (model) {
 			AmigaModel.CD32 -> {
-				// id 64 is combined KS+ext ROM; id 18 requires ext id 19.
-				if (selectedKickId == 64) {
-					null
-				} else {
-					val extId = profile.extIds.firstOrNull { id -> !romsById[id].isNullOrEmpty() }
-					if (extId == null) return SelectedRoms(null, null)
-					pickDeterministic(romsById[extId].orEmpty())
+				if (selectedKickId == 64) null
+				else {
+					// Try CRC first
+					val crcExt = profile.extIds.firstNotNullOfOrNull { id ->
+						romsWithIds.filter { it.second == id }.map { it.first }.sortedBy { it.name.lowercase() }.firstOrNull()
+					}
+					// Fallback to filename
+					crcExt ?: romsWithIds.map { it.first }.filter { 
+						val name = it.name.lowercase()
+						name.contains("cd32") && name.contains("ext")
+					}.sortedBy { it.name.lowercase() }.firstOrNull()
 				}
 			}
 			AmigaModel.CDTV -> {
-				// CDTV defaults require both Kickstart and extended ROM.
-				val extId = profile.extIds.firstOrNull { id -> !romsById[id].isNullOrEmpty() }
-				if (extId == null) return SelectedRoms(null, null)
-				pickDeterministic(romsById[extId].orEmpty())
+				val crcExt = profile.extIds.firstNotNullOfOrNull { id ->
+					romsWithIds.filter { it.second == id }.map { it.first }.sortedBy { it.name.lowercase() }.firstOrNull()
+				}
+				crcExt ?: romsWithIds.map { it.first }.filter { 
+					val name = it.name.lowercase()
+					name.contains("cdtv") && name.contains("ext")
+				}.sortedBy { it.name.lowercase() }.firstOrNull()
 			}
 			else -> null
 		}
-
-		return SelectedRoms(kick, ext)
 	}
 
 	private fun detectRomId(rom: AmigaFile): Int? {

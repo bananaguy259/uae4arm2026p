@@ -43,7 +43,7 @@ import com.uae4arm2026.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AboutScreen(onBack: () -> Unit) {
+fun AboutScreen(onBack: () -> Unit, onRunWizard: () -> Unit = {}) {
 	val context = LocalContext.current
 	val versionName = try {
 		context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "unknown"
@@ -99,6 +99,28 @@ fun AboutScreen(onBack: () -> Unit) {
 						style = MaterialTheme.typography.bodyMedium,
 						color = MaterialTheme.colorScheme.onPrimaryContainer
 					)
+				}
+			}
+
+			// Wizard re-run button
+			OutlinedCard(
+				modifier = Modifier.fillMaxWidth(),
+				onClick = onRunWizard
+			) {
+				Row(
+					modifier = Modifier.padding(16.dp),
+					verticalAlignment = Alignment.CenterVertically
+				) {
+					Icon(
+						Icons.Default.Code, // Re-using an icon or picker
+						contentDescription = null,
+						tint = MaterialTheme.colorScheme.primary
+					)
+					Spacer(modifier = Modifier.width(12.dp))
+					Column {
+						Text("Run Setup Wizard", style = MaterialTheme.typography.titleMedium)
+						Text("Re-configure your library folders", style = MaterialTheme.typography.bodySmall)
+					}
 				}
 			}
 

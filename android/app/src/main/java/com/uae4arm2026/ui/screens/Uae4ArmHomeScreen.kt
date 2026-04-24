@@ -378,7 +378,9 @@ fun Uae4ArmHomeScreen(
 
     LaunchedEffect(settings.hardDrives) {
         val found = withContext(Dispatchers.IO) {
-            AgsDetector.detect(context) ?: AgsDetector.detectFromMountedDrives(settings.hardDrives)
+            AgsDetector.detectFromAgsLibraryPath(context)
+                ?: AgsDetector.detect(context) 
+                ?: AgsDetector.detectFromMountedDrives(settings.hardDrives)
         }
         agsInstall = found
     }
@@ -583,7 +585,7 @@ fun Uae4ArmHomeScreen(
                             driveArt    = R.drawable.featured_drive_dh0,
                             currentPath = settings.cdImage,
                             onEject     = { settingsViewModel.updateSettings { s -> s.copy(cdImage = "") } },
-                            onPickFile  = {
+                            onClick = {
                                 openFilePicker(FileCategory.CD_IMAGES, listOf("cue", "iso", "chd", "nrg", "mds")) { path ->
                                     settingsViewModel.updateSettings { s -> s.copy(cdImage = path) }
                                 }
@@ -620,7 +622,7 @@ fun Uae4ArmHomeScreen(
                                     label = "DF0", driveArt = R.drawable.featured_drive_df0,
                                     currentPath = settings.floppy0,
                                     onEject    = { settingsViewModel.updateSettings { s -> s.copy(floppy0 = "") } },
-                                    onPickFile = {
+                                    onClick = {
                                         openFilePicker(FileCategory.FLOPPIES, listOf("adf", "adz", "dms", "ipf", "hfe")) { path ->
                                             settingsViewModel.updateSettings { s -> s.copy(floppy0 = path) }
                                         }
@@ -630,7 +632,7 @@ fun Uae4ArmHomeScreen(
                                     label = "DF1", driveArt = R.drawable.featured_drive_df_external,
                                     currentPath = settings.floppy1,
                                     onEject    = { settingsViewModel.updateSettings { s -> s.copy(floppy1 = "", floppy1Type = -1) } },
-                                    onPickFile = {
+                                    onClick = {
                                         openFilePicker(FileCategory.FLOPPIES, listOf("adf", "adz", "dms", "ipf", "hfe")) { path ->
                                             settingsViewModel.updateSettings { s -> s.copy(floppy1 = path, floppy1Type = 0) }
                                         }
@@ -640,7 +642,7 @@ fun Uae4ArmHomeScreen(
                                     label = "DF2", driveArt = R.drawable.featured_drive_df_external,
                                     currentPath = settings.floppy2,
                                     onEject    = { settingsViewModel.updateSettings { s -> s.copy(floppy2 = "", floppy2Type = -1) } },
-                                    onPickFile = {
+                                    onClick = {
                                         openFilePicker(FileCategory.FLOPPIES, listOf("adf", "adz", "dms", "ipf", "hfe")) { path ->
                                             settingsViewModel.updateSettings { s -> s.copy(floppy2 = path, floppy2Type = 0) }
                                         }
@@ -650,7 +652,7 @@ fun Uae4ArmHomeScreen(
                                     label = "DF3", driveArt = R.drawable.featured_drive_df_external,
                                     currentPath = settings.floppy3,
                                     onEject    = { settingsViewModel.updateSettings { s -> s.copy(floppy3 = "", floppy3Type = -1) } },
-                                    onPickFile = {
+                                    onClick = {
                                         openFilePicker(FileCategory.FLOPPIES, listOf("adf", "adz", "dms", "ipf", "hfe")) { path ->
                                             settingsViewModel.updateSettings { s -> s.copy(floppy3 = path, floppy3Type = 0) }
                                         }
@@ -688,7 +690,7 @@ fun Uae4ArmHomeScreen(
                                                     s.copy(hardDrives = updated)
                                                 }
                                             },
-                                            onPickFile = { hdfSlotToPick = i }
+                                            onClick = { hdfSlotToPick = i }
                                         )
                                     }
                                     if (settings.hardDrives.size < 10) AddDriveCard {
@@ -832,6 +834,18 @@ fun Uae4ArmHomeScreen(
                     )
                 }
                 Button(
+                    onClick = { navController?.navigate(Screen.About.route) },
+                    colors = ButtonDefaults.buttonColors(containerColor = BtnGrey),
+                    modifier = Modifier.height(52.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Add, // Using Add as a placeholder for 'About/Wizard'
+                        contentDescription = "About / Wizard",
+                        tint = TextPrimary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                Button(
                     onClick = { resetAllMedia() },
                     colors = ButtonDefaults.buttonColors(containerColor = BtnGrey),
                     modifier = Modifier.weight(1f).height(52.dp)
@@ -918,7 +932,7 @@ private fun KickstartRow(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text  = if (settings.romFile.isNotBlank())
-                        "KS: " + settings.romFile.substringAfterLast('/')
+                        "KS: " + android.net.Uri.decode(settings.romFile.substringAfterLast('/'))
                     else
                         "Kickstart: (not selected)",
                     color    = if (settings.romFile.isNotBlank()) TextPrimary else TextOrange,

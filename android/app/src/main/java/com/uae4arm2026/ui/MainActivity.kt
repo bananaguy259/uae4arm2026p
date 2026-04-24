@@ -245,8 +245,11 @@ com.uae4arm2026.data.model.AmigaModel.CD32,
 		try {
 			val outFile = File(getExternalFilesDir(null), assetPath)
 
-			// Skip overwriting files in user-modifiable directories if they already exist
-			if (outFile.exists()) {
+			// Skip overwriting files in user-modifiable directories if they already exist,
+			// EXCEPT for critical system files that must always be up-to-date.
+			val criticalFiles = setOf("whdboot/boot-data.zip", "whdboot/WHDLoad", "whdboot/AmiQuit", "whdboot/JST")
+			
+			if (outFile.exists() && assetPath !in criticalFiles) {
 				val topDir = assetPath.substringBefore('/')
 				if (topDir in userModifiableDirs) {
 					Log.d(TAG, "Preserving user-modified file: $assetPath")

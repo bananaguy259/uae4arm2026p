@@ -91,6 +91,15 @@ object AgsDetector {
     }
 
     /**
+     * Resolve an AGS install from the persisted library path.
+     */
+    fun detectFromAgsLibraryPath(context: Context): AgsInstall? {
+        val path = FileManager.getCategoryLibraryPath(context, FileCategory.WHDLOAD_GAMES)
+            ?: return null
+        return detectFromPath(path)
+    }
+
+    /**
      * Resolve an AGS install from a user-selected directory.
      * Accepts either the AGS_UAE directory itself or a parent directory that contains it.
      */

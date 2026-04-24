@@ -58,7 +58,7 @@ object ArchiveRepository {
 		val allowedExtensions = when (collection.category) {
 			FileCategory.ROMS -> kickstartExtensions
 			FileCategory.FLOPPIES -> floppyExtensions
-			else -> collection.category.extensions
+			else -> collection.category.extensions + "zip"
 		}
 
 		val files = buildList {
@@ -67,8 +67,6 @@ object ArchiveRepository {
 				val fileJson = filesArray.optJSONObject(index) ?: continue
 				val fileName = fileJson.optString("name").trim()
 				if (fileName.isEmpty()) continue
-				val source = fileJson.optString("source").trim()
-				if (source.isNotEmpty() && source != "original") continue
 
 				val ext = fileName.substringAfterLast('.', "").lowercase(Locale.ROOT)
 				if (ext !in allowedExtensions) continue
@@ -105,11 +103,15 @@ object ArchiveRepository {
 		val finalFile = createUniqueTargetFile(targetDir, item.fileName)
 		val tempFile = File(finalFile.absolutePath + ".part")
 
-		if (tempFile.exists()) {
-			tempFile.delete()
-		}
-
 		try {
+			if (tempFile.exists()) {
+				try {
+					tempFile.delete()
+				} catch (_: Exception) {
+					// Non-critical if we can still overwrite it
+				}
+			}
+
 			var finalDownloadedBytes = 0L
 			var finalTotalBytes: Long? = item.sizeBytes
 			openConnection(item.downloadUrl).useConnection { connection ->
@@ -143,15 +145,29 @@ object ArchiveRepository {
 				}
 			}
 
-			if (!tempFile.renameTo(finalFile)) {
-				tempFile.copyTo(finalFile, overwrite = true)
-				tempFile.delete()
+			// Atomic move if possible, fallback to copy
+			try {
+				if (!tempFile.renameTo(finalFile)) {
+					tempFile.copyTo(finalFile, overwrite = true)
+					tempFile.delete()
+				}
+			} catch (e: Exception) {
+				// Final attempt using NIO if available (Android 8+)
+				if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+					java.nio.file.Files.move(
+						tempFile.toPath(), 
+						finalFile.toPath(), 
+						java.nio.file.StandardCopyOption.REPLACE_EXISTING
+					)
+				} else {
+					throw e
+				}
 			}
 
 			onProgress(finalDownloadedBytes, finalTotalBytes)
 			return finalFile
 		} catch (e: Exception) {
-			tempFile.delete()
+			try { tempFile.delete() } catch(_: Exception) {}
 			throw e
 		}
 	}

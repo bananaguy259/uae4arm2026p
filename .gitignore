@@ -73,23 +73,6 @@ VSLinux/.vs
 *.slo
 *.lai
 
-# Android Studio/IntelliJ
-*.iml
-*.iws
-/out/
-.gradle/
-bin/
-gen/
-out/
-build/
-.externalNativeBuild
-captures/
-.navigation/
-*.ipr
-*~
-*.swp
-obj/
-
 # Logs
 *.log
 
@@ -145,25 +128,39 @@ Brewfile.lock.json
 # Gradle wrapper
 !/gradle/wrapper/gradle-wrapper.jar
 
-# Android subproject specific
+# Android and Build artifacts
+**/.gradle/
+**/.gradle-local/
+**/build/
+**/out/
+**/bin/
+**/gen/
+**/.externalNativeBuild/
+**/.cxx/
+**/captures/
+**/.navigation/
+**/.kotlin/
+*.iml
+*.iws
+*.ipr
+
+# Android specific
 /android/local.properties
 /android/keystore.properties
 *.keystore
 *.jks
-/android/.gradle/
-/android/build/
-/android/app/build/
 /android/.idea/
 android/app/src/main/assets/data
 android/app/src/main/assets/controllers
 android/app/src/main/assets/roms
 android/app/src/main/assets/whdboot
-android/local.properties
-.claude/settings.local.json
-build-debug
-.cache
-.sisyphus/
-.gradle-local/
 android/*.png
 android/*.txt
 !android/AGENTS.md
+
+# Application specific
+.claude/
+.gemini/
+.sisyphus/
+build-debug/
+.cache/
