@@ -850,17 +850,25 @@ bool my_existsfiledir(const char *name)
 bool my_existsfile(const char* name)
 {
 	if (!name) return false;
-	const auto output = iso_8859_1_to_utf8(string(name));
-	std::error_code ec;
-	return fs::exists(output, ec) && !ec && fs::is_regular_file(output, ec) && !ec;
+	try {
+		const auto output = iso_8859_1_to_utf8(string(name));
+		std::error_code ec;
+		return fs::exists(output, ec) && !ec && fs::is_regular_file(output, ec) && !ec;
+	} catch (...) {
+		return false;
+	}
 }
 
 bool my_existsdir(const char* name)
 {
 	if (!name) return false;
-	const auto output = iso_8859_1_to_utf8(string(name));
-	std::error_code ec;
-	return fs::exists(output, ec) && !ec && fs::is_directory(output, ec) && !ec;
+	try {
+		const auto output = iso_8859_1_to_utf8(string(name));
+		std::error_code ec;
+		return fs::exists(output, ec) && !ec && fs::is_directory(output, ec) && !ec;
+	} catch (...) {
+		return false;
+	}
 }
 
 uae_s64 my_fsize(struct my_openfile_s* mos)

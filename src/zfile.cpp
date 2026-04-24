@@ -43,8 +43,6 @@ const TCHAR *uae_archive_extensions[] = { _T("zip"), _T("rar"), _T("7z"), _T("lh
 
 const TCHAR *zfile_get_ext(const TCHAR *name)
 {
-	if (name != nullptr && _tcsncmp(name, _T("/proc/"), 6) == 0)
-		return nullptr;
 	const TCHAR *sep = _tcsrchr(name, '\\');
 	if (!sep) {
 		sep = _tcsrchr(name, '/');

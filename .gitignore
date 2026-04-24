@@ -131,6 +131,8 @@ Brewfile.lock.json
 # Android and Build artifacts
 **/.gradle/
 **/.gradle-local/
+**/.gradle-native/
+**/.gradle-user/
 **/build/
 **/out/
 **/bin/

@@ -214,21 +214,41 @@ object EmulatorLauncher {
 	}
 
 	private fun computeDocumentFingerprint(context: Context, treeUri: Uri, extensions: Set<String>): String {
-		val root = androidx.documentfile.provider.DocumentFile.fromTreeUri(context, treeUri)
-		if (root == null || !root.isDirectory) return "0:0:0"
+		val resolver = context.contentResolver
+		val childrenUri = android.provider.DocumentsContract.buildChildDocumentsUriUsingTree(
+			treeUri,
+			android.provider.DocumentsContract.getTreeDocumentId(treeUri)
+		)
 
-		val files = root.listFiles()
+		val projection = arrayOf(
+			android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+			android.provider.DocumentsContract.Document.COLUMN_SIZE,
+			android.provider.DocumentsContract.Document.COLUMN_LAST_MODIFIED
+		)
+
 		var count = 0
 		var totalSize = 0L
 		var latestModified = 0L
 
-		for (doc in files) {
-			if (doc.isFile && doc.name?.substringAfterLast('.', "")?.lowercase() in extensions) {
-				count++
-				totalSize += doc.length()
-				val mod = doc.lastModified()
-				if (mod > latestModified) latestModified = mod
+		try {
+			resolver.query(childrenUri, projection, null, null, null)?.use { cursor ->
+				val nameIndex = cursor.getColumnIndex(android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+				val sizeIndex = cursor.getColumnIndex(android.provider.DocumentsContract.Document.COLUMN_SIZE)
+				val modIndex = cursor.getColumnIndex(android.provider.DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+
+				while (cursor.moveToNext()) {
+					val name = cursor.getString(nameIndex) ?: continue
+					val ext = name.substringAfterLast('.', "").lowercase()
+					if (ext in extensions) {
+						count++
+						totalSize += cursor.getLong(sizeIndex)
+						val mod = cursor.getLong(modIndex)
+						if (mod > latestModified) latestModified = mod
+					}
+				}
 			}
+		} catch (e: Exception) {
+			android.util.Log.w("Uae4Arm-Launcher", "Fingerprint failed for $treeUri", e)
 		}
 		return "$count:$totalSize:$latestModified"
 	}

@@ -799,7 +799,7 @@ int hdf_open_target(struct hardfiledata *hfd, const TCHAR *pname)
 
 	char* ext;
 	ext = _tcsrchr(name, '.');
-	if (ext != nullptr && strncmp(name, "/proc/", 6) != 0) {
+	if (ext != nullptr) {
 		ext++;
 		for (i = 0; hdz[i]; i++) {
 			if (!_tcsicmp(ext, hdz[i]))

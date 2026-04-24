@@ -202,9 +202,8 @@ class FileManagerViewModel(application: Application) : AndroidViewModel(applicat
 			FileManager.persistDirectoryAccess(app, uri)
 			val detected = FileManager.detectCategoryFolders(app, uri)
 			if (detected.isNotEmpty()) {
-				detected.forEach { (detectedCategory, pair) ->
-					val (detectedPath, docUri) = pair
-					FileManager.setCategoryLibraryPath(app, detectedCategory, detectedPath, docUri.toString())
+				detected.forEach { (detectedCategory, path) ->
+					FileManager.setCategoryLibraryPath(app, detectedCategory, path, uri.toString())
 				}
 				repository.rescan()
 				_importResult.value = "Mapped ${detected.size} library folders from selected parent"

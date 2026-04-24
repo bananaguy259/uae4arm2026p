@@ -140,7 +140,10 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 		return key.endsWith("_path") || 
 			   key.equals("whdload_arch_path") || 
 			   key.equals("config_path") ||
-			   key.equals("path_rom");
+			   key.equals("path_rom") ||
+			   key.equals("filesystem") ||
+			   key.equals("filesystem2") ||
+			   key.startsWith("uaehf"); // uaehf can be dir or hdf, we check value below
 	}
 
 	private String translateConfigFile(String configPath) {
@@ -163,38 +166,60 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 				String key = line.substring(0, eq).trim();
 				String value = line.substring(eq + 1).trim();
 
-				// Strip quotes if present (UAE allows DH0:"/path/to/hdf")
-				String rawPath = value;
-				String prefix = "";
-				String suffix = "";
+				// Skip standard directory path keys
+				if (isDirectoryKey(key) && !key.startsWith("uaehf")) {
+					translatedLines.add(line);
+					continue;
+				}
 				
-				// Handle hardfile2=rw,DH0:"/path/to/hdf",...
+				// Handle uaehf0=type,rw,DEV:"path",...
+				if (key.startsWith("uaehf")) {
+					if (value.startsWith("dir,") || value.contains(",dir,")) {
+						// This is a directory mount, don't translate the path
+						translatedLines.add(line);
+						continue;
+					}
+				}
+
+				String translatedValue = value;
+				
+				// Pattern 1: Quoted path "/..."
 				if (value.contains("\"/")) {
 					int qStart = value.indexOf("\"/");
 					int qEnd = value.lastIndexOf("\"");
 					if (qEnd > qStart) {
-						prefix = value.substring(0, qStart + 1);
-						rawPath = value.substring(qStart + 1, qEnd);
-						suffix = value.substring(qEnd);
+						String rawPath = value.substring(qStart + 1, qEnd);
+						if (!FileManager.INSTANCE.isAppOwnedPath(this, rawPath)) {
+							String translatedPath = translatePathToFd(rawPath);
+							translatedValue = value.substring(0, qStart + 1) + translatedPath + value.substring(qEnd);
+							changed = true;
+						}
 					}
-				} else if (value.startsWith("/")) {
-					rawPath = value;
-				}
-
-				if (rawPath.startsWith("/") && !FileManager.INSTANCE.isAppOwnedPath(this, rawPath)) {
-					File file = new File(rawPath);
-					boolean isDir = file.isDirectory() || key.equals("filesystem2") || value.contains("=dir,") || value.startsWith("dir,");
-					if (isDir) {
-						// Directories cannot be represented as a single FD for traversals
-						translatedLines.add(line);
-					} else {
+				} 
+				// Pattern 2: Unquoted path starting with / after a colon
+				else if (value.contains(":/")) {
+					int cIdx = value.indexOf(":/");
+					String rawPath = value.substring(cIdx + 1);
+					int commaIdx = rawPath.indexOf(',');
+					String suffix = "";
+					if (commaIdx > 0) {
+						suffix = rawPath.substring(commaIdx);
+						rawPath = rawPath.substring(0, commaIdx);
+					}
+					
+					if (!FileManager.INSTANCE.isAppOwnedPath(this, rawPath)) {
 						String translatedPath = translatePathToFd(rawPath);
-						translatedLines.add(line.substring(0, eq + 1) + prefix + translatedPath + suffix);
+						translatedValue = value.substring(0, cIdx + 1) + translatedPath + suffix;
 						changed = true;
 					}
-				} else {
-					translatedLines.add(line);
 				}
+				// Pattern 3: Simple absolute path
+				else if (value.startsWith("/") && !FileManager.INSTANCE.isAppOwnedPath(this, value)) {
+					translatedValue = translatePathToFd(value);
+					changed = true;
+				}
+
+				translatedLines.add(key + "=" + translatedValue);
 			}
 
 			if (changed) {
@@ -211,21 +236,21 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 	}
 
 	private String translatePathToFd(String path) {
-		if (path.startsWith("/proc/self/fd/")) return path;
+		if (path.startsWith("/proc/self/fd/") || path.startsWith(getCacheDir().getAbsolutePath())) return path;
 		
-		Uri contentUri = null;
-		if (path.startsWith("content://")) {
-			contentUri = Uri.parse(path);
-		} else {
-			contentUri = FileManager.INSTANCE.findContentUriForPath(this, path);
-		}
-
-		if (contentUri == null) {
-			android.util.Log.w("Uae4Arm-SDL", "Could not find content URI for external path: " + path);
-			return path;
-		}
-
 		try {
+			Uri contentUri = null;
+			if (path.startsWith("content://")) {
+				contentUri = Uri.parse(path);
+			} else {
+				contentUri = FileManager.INSTANCE.findContentUriForPath(this, path);
+			}
+
+			if (contentUri == null) {
+				android.util.Log.w("Uae4Arm-SDL", "Could not find content URI for external path: " + path);
+				return path;
+			}
+
 			// Open for read/write if possible, fallback to read
 			ParcelFileDescriptor pfd;
 			try {
@@ -238,11 +263,29 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 				openFileDescriptors.add(pfd);
 				int fd = pfd.getFd();
 				String fdPath = "/proc/self/fd/" + fd;
-				android.util.Log.d("Uae4Arm-SDL", "Translated " + path + " -> " + fdPath);
-				return fdPath;
+				
+				// Create a temporary symlink with the original extension so the emulator core
+				// can correctly identify the file type (ADF, HDF, ZIP, etc.)
+				String extension = "";
+				int lastDot = path.lastIndexOf('.');
+				if (lastDot > 0) {
+					extension = path.substring(lastDot);
+				}
+				
+				File symlink = new File(getCacheDir(), "bridge_" + fd + extension);
+				if (symlink.exists()) symlink.delete();
+				
+				try {
+					android.system.Os.symlink(fdPath, symlink.getAbsolutePath());
+					android.util.Log.d("Uae4Arm-SDL", "Translated " + path + " -> " + symlink.getAbsolutePath());
+					return symlink.getAbsolutePath();
+				} catch (Exception e) {
+					android.util.Log.e("Uae4Arm-SDL", "Failed to create symlink for " + fdPath, e);
+					return fdPath;
+				}
 			}
-		} catch (FileNotFoundException e) {
-			android.util.Log.e("Uae4Arm-SDL", "Failed to open FD for " + contentUri, e);
+		} catch (Exception e) {
+			android.util.Log.e("Uae4Arm-SDL", "Critical error in translatePathToFd for " + path, e);
 		}
 		return path;
 	}
@@ -338,7 +381,11 @@ public class Uae4ArmEmulatorActivity extends SDLActivity {
 
 		new AlertDialog.Builder(this)
 			.setTitle(title)
-			.setItems(labels, (dialog, which) -> nativeInsertFloppy(drive, floppies.get(which).getPath()))
+			.setItems(labels, (dialog, which) -> {
+				String path = floppies.get(which).getPath();
+				String translated = translatePathToFd(path);
+				nativeInsertFloppy(drive, translated);
+			})
 			.setNeutralButton(R.string.action_eject, (dialog, which) -> nativeEjectFloppy(drive))
 			.setNegativeButton(android.R.string.cancel, null)
 			.setOnDismissListener(d -> completePausedSubdialogFlow())

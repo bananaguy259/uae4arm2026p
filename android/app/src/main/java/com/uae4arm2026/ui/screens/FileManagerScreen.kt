@@ -24,6 +24,8 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
@@ -85,6 +87,7 @@ fun FileManagerScreen(
 	initialSection: Int = 0,
 	showSectionTabs: Boolean = true,
 	@Suppress("UNUSED_PARAMETER") showTopBar: Boolean = true,
+	navController: androidx.navigation.NavController? = null,
 	viewModel: FileManagerViewModel = viewModel()
 ) {
 	val context = LocalContext.current
@@ -151,30 +154,46 @@ fun FileManagerScreen(
 				modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
 			)
 
-			// ULTRA COMPACT SEARCH BAR (Matches Downloads)
-			Box(
-				modifier = Modifier
-					.fillMaxWidth()
-					.padding(horizontal = 16.dp, vertical = 4.dp)
-					.height(32.dp)
-					.background(MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.small)
-					.padding(horizontal = 12.dp),
-				contentAlignment = Alignment.CenterStart
+			// ULTRA COMPACT HEADER WITH HOME BUTTON
+			Row(
+				modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+				verticalAlignment = Alignment.CenterVertically
 			) {
-				if (searchQuery.isEmpty()) {
-					Text(
-						text = stringResource(R.string.search_placeholder),
-						style = MaterialTheme.typography.bodySmall,
-						color = MaterialTheme.colorScheme.onSurfaceVariant
+				if (navController != null) {
+					IconButton(onClick = { 
+						navController.navigate(com.uae4arm2026.ui.navigation.Screen.QuickStart.route) {
+							popUpTo(com.uae4arm2026.ui.navigation.Screen.QuickStart.route) { inclusive = true }
+						}
+					}, modifier = Modifier.size(32.dp)) {
+						Icon(Icons.Default.Home, contentDescription = "Home", modifier = Modifier.size(20.dp))
+					}
+					Spacer(modifier = Modifier.width(8.dp))
+				}
+
+				// SEARCH BAR
+				Box(
+					modifier = Modifier
+						.weight(1f)
+						.height(32.dp)
+						.background(MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.small)
+						.padding(horizontal = 12.dp),
+					contentAlignment = Alignment.CenterStart
+				) {
+					if (searchQuery.isEmpty()) {
+						Text(
+							text = stringResource(R.string.search_placeholder),
+							style = MaterialTheme.typography.bodySmall,
+							color = MaterialTheme.colorScheme.onSurfaceVariant
+						)
+					}
+					BasicTextField(
+						value = searchQuery,
+						onValueChange = { searchQuery = it },
+						modifier = Modifier.fillMaxWidth(),
+						singleLine = true,
+						textStyle = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurface)
 					)
 				}
-				BasicTextField(
-					value = searchQuery,
-					onValueChange = { searchQuery = it },
-					modifier = Modifier.fillMaxWidth(),
-					singleLine = true,
-					textStyle = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurface)
-				)
 			}
 
 			// COMPACT SECTION TABS (Library / Downloads)

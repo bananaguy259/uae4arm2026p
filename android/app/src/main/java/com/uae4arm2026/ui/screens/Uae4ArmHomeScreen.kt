@@ -75,6 +75,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.navigation.NavController
 import com.uae4arm2026.R
 import com.uae4arm2026.data.EmulatorLauncher
@@ -324,7 +325,6 @@ fun Uae4ArmHomeScreen(
 
 	// ── AGS auto-detect ─────────────────────────────────────────────────
 	var agsInstall by remember { mutableStateOf<AgsDetector.AgsInstall?>(null) }
-	var agsDismissed by remember { mutableStateOf(false) }
 	var agsBusy by remember { mutableStateOf(false) }
 	var agsStatusText by remember { mutableStateOf<String?>(null) }
 	var agsNeedsBrowse by remember { mutableStateOf(false) }
@@ -379,7 +379,7 @@ fun Uae4ArmHomeScreen(
 		val found = withContext(Dispatchers.IO) {
 			AgsDetector.detectFromAgsLibraryPath(context)
 				?: AgsDetector.detect(context) 
-				?: AgsDetector.detectFromMountedDrives(settings.hardDrives)
+				?: AgsDetector.detectFromMountedDrives(context, settings.hardDrives)
 		}
 		agsInstall = found
 	}
@@ -392,18 +392,16 @@ fun Uae4ArmHomeScreen(
 	}
 	val isAgsMountedInHdfTab = playMode == PlayMode.HDF &&
 		agsInstall != null &&
-		agsMountedPaths != null &&
-		settings.hardDrives == agsMountedPaths
+		isAgsMounted(settings.hardDrives, agsMountedPaths)
 
 	fun resetAgsSetup() {
 		val mountedPaths = agsMountedPaths
-		if (mountedPaths != null && settings.hardDrives == mountedPaths) {
+		if (isAgsMounted(settings.hardDrives, mountedPaths)) {
 			settingsViewModel.updateSettings { s -> s.copy(hardDrives = listOf("")) }
 		}
 		agsInstall = null
 		agsNeedsBrowse = true
 		agsStatusText = "AGS reset. Tap Browse to choose the folder again"
-		agsDismissed = true
 	}
 
 	// ── Mount AGS logic ───────────────────────────────────────────────────
@@ -462,7 +460,6 @@ fun Uae4ArmHomeScreen(
 			)
 		}
 		agsInstall = null
-		agsDismissed = true
 		agsNeedsBrowse = true
 		agsStatusText = "Media reset. AGS will require Browse again"
 	}
@@ -496,9 +493,7 @@ fun Uae4ArmHomeScreen(
 							onClick = {
 								val action = prompt.secondaryAction
 								launchValidationPrompt = null
-								if (action != null) {
-									navController?.navigate(action.route)
-								}
+								navController?.navigate(action.route)
 							}
 						) {
 							Text(prompt.secondaryAction.label)
@@ -515,6 +510,7 @@ fun Uae4ArmHomeScreen(
 		Column(
 			modifier = Modifier
 				.fillMaxSize()
+				.statusBarsPadding()
 				.padding(4.dp),
 			verticalArrangement = Arrangement.spacedBy(4.dp)
 		) {
@@ -523,24 +519,6 @@ fun Uae4ArmHomeScreen(
 			}
 
 			// ── AGS auto-detect banner ────────────────────────────────
-			if (agsInstall != null && !agsDismissed) {
-				AgsBanner(
-					install = agsInstall!!,
-					hasKickstart = agsInstall!!.romFile != null || settings.romFile.isNotBlank(),
-					onLaunch = {
-						val configPath = AgsDetector.writeConfig(
-							context,
-							agsInstall!!,
-							settings.romFile.ifBlank { null },
-							AgsDetector.AGS_WIDESCREEN_RTG_WIDTH,
-							AgsDetector.AGS_WIDESCREEN_RTG_HEIGHT,
-						)
-						EmulatorLauncher.launchWithConfig(context, configPath)
-					},
-					onDismiss = { agsDismissed = true }
-				)
-			}
-
 			// ── Kickstart row ─────────────────────────────────────────
 			KickstartRow(
 				settings = settings,
@@ -710,11 +688,10 @@ fun Uae4ArmHomeScreen(
 															agsBusy = true
 															agsStatusText = "Checking $pickedPath"
 															val install = withContext(Dispatchers.IO) {
-																AgsDetector.detectFromPath(pickedPath)
+																AgsDetector.detectFromPath(context, pickedPath)
 															}
 															if (install != null) {
 																agsNeedsBrowse = false
-																agsDismissed = false
 															}
 															mountInstall(install)
 														} catch (e: Exception) {
@@ -759,8 +736,6 @@ fun Uae4ArmHomeScreen(
 						PlayMode.WHDLOAD -> {
 							WhdloadRow(
 								selected = selectedWhd,
-								canStart = true,
-								onEject = { viewModel.selectWhdload(null) },
 								onPickFile = {
 									openFilePicker(FileCategory.WHDLOAD_GAMES) { path ->
 										val f = java.io.File(path)
@@ -772,11 +747,6 @@ fun Uae4ArmHomeScreen(
 											lastModified = f.lastModified(),
 											category     = FileCategory.WHDLOAD_GAMES
 										))
-									}
-								},
-								onStart = {
-									selectedWhd?.let {
-										EmulatorLauncher.launchWhdload(context, it.path, settings)
 									}
 								}
 							)
@@ -816,13 +786,17 @@ fun Uae4ArmHomeScreen(
 					)
 				}
 				Button(
-					onClick = { navController?.navigate(Screen.About.route) },
+					onClick = {
+						navController?.navigate(Screen.Onboarding.route) {
+							launchSingleTop = true
+						}
+					},
 					colors = ButtonDefaults.buttonColors(containerColor = BtnGrey),
 					modifier = Modifier.height(52.dp)
 				) {
 					Icon(
-						Icons.Default.Add, // Using Add as a placeholder for 'About/Wizard'
-						contentDescription = "About / Wizard",
+						Icons.Default.Replay,
+						contentDescription = "Restart setup wizard",
 						tint = TextPrimary,
 						modifier = Modifier.size(20.dp)
 					)
@@ -895,7 +869,9 @@ private fun KickstartRow(
 	SectionBox(
 		bgColor     = BgKick,
 		borderColor = BorderKick,
-		modifier    = Modifier.fillMaxWidth()
+		modifier    = Modifier
+			.fillMaxWidth()
+			.clickable(onClick = onPickRomFile)
 	) {
 		Row(
 			verticalAlignment = Alignment.CenterVertically,
@@ -908,7 +884,6 @@ private fun KickstartRow(
 				modifier           = Modifier
 					.size(44.dp)
 					.clip(RoundedCornerShape(4.dp))
-					.clickable(onClick = onPickRomFile)
 			)
 			Spacer(Modifier.width(8.dp))
 			Column(modifier = Modifier.weight(1f)) {
@@ -1306,10 +1281,7 @@ private fun AgsDriveCard(
 @Composable
 private fun WhdloadRow(
 	selected: AmigaFile?,
-	canStart: Boolean,
-	onEject: () -> Unit,
-	onPickFile: () -> Unit,
-	onStart: () -> Unit
+	onPickFile: () -> Unit
 ) {
 	val displayName = selected?.name
 		?.removeSuffix(".lha")?.removeSuffix(".lzx")?.removeSuffix(".lzh")
@@ -1318,115 +1290,30 @@ private fun WhdloadRow(
 	SectionBox(
 		bgColor     = BgMedia,
 		borderColor = BorderMedia,
-		modifier    = Modifier.fillMaxWidth()
+		modifier    = Modifier.fillMaxWidth().clickable(onClick = onPickFile)
 	) {
 		Row(
 			verticalAlignment = Alignment.CenterVertically,
 			modifier          = Modifier.fillMaxWidth()
 		) {
-			IconButton(onClick = onPickFile, modifier = Modifier.size(28.dp)) {
-				Icon(
-					Icons.Default.Archive,
-					contentDescription = "Select WHDLoad",
-					tint = GreenAccent,
-					modifier = Modifier.size(20.dp)
-				)
-			}
+			Icon(
+				Icons.Default.Archive,
+				contentDescription = "Select WHDLoad",
+				tint = GreenAccent,
+				modifier = Modifier.size(24.dp).padding(start = 4.dp)
+			)
+			Spacer(Modifier.width(8.dp))
 			Text(
 				text = "LHA",
-				style = TextStyle(fontSize = 9.sp, color = GreenAccent, fontWeight = FontWeight.Bold)
+				style = TextStyle(fontSize = 10.sp, color = GreenAccent, fontWeight = FontWeight.Bold)
 			)
-			Spacer(Modifier.width(6.dp))
+			Spacer(Modifier.width(8.dp))
 			Text(
 				text = displayName,
-				style = TextStyle(fontSize = 10.sp, color = if (selected != null) TextPrimary else TextSecondary),
+				style = TextStyle(fontSize = 11.sp, color = if (selected != null) TextPrimary else TextSecondary),
 				modifier = Modifier.weight(1f),
 				maxLines = 1,
 				overflow = TextOverflow.Ellipsis
-			)
-			if (selected != null) {
-				IconButton(onClick = onEject, modifier = Modifier.size(32.dp)) {
-					Icon(Icons.Default.Eject, contentDescription = "Eject",
-						tint = TextSecondary, modifier = Modifier.size(18.dp))
-				}
-			}
-			Spacer(Modifier.width(6.dp))
-			Button(
-				onClick = onStart,
-				colors = ButtonDefaults.buttonColors(containerColor = BtnGreenStart),
-				modifier = Modifier.height(34.dp).width(88.dp),
-				enabled = canStart
-			) {
-				Text(
-					text = "START",
-					fontSize = 12.sp,
-					fontWeight = FontWeight.Bold,
-					color = TextPrimary,
-					maxLines = 1
-				)
-			}
-		}
-	}
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun AgsBanner(
-	install: AgsDetector.AgsInstall,
-	hasKickstart: Boolean,
-	onLaunch: () -> Unit,
-	onDismiss: () -> Unit,
-) {
-	Row(
-		verticalAlignment = Alignment.CenterVertically,
-		modifier = Modifier
-			.fillMaxWidth()
-			.background(Color(0xFF1A237E), RoundedCornerShape(8.dp))
-			.border(1.dp, Color(0x664FC3F7), RoundedCornerShape(8.dp))
-			.padding(horizontal = 8.dp, vertical = 6.dp)
-	) {
-		Image(
-			painter             = painterResource(R.drawable.featured_a1200),
-			contentDescription  = null,
-			contentScale        = ContentScale.Fit,
-			modifier            = Modifier.size(40.dp).clip(RoundedCornerShape(4.dp))
-		)
-		Spacer(Modifier.width(8.dp))
-		Column(modifier = Modifier.weight(1f)) {
-			Text(
-				"AGS Amiga Game System detected",
-				style = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
-			)
-			Text(
-				install.agsDir.absolutePath,
-				style    = TextStyle(fontSize = 9.sp, color = TextSecondary),
-				maxLines = 1,
-				overflow = TextOverflow.Ellipsis
-			)
-			if (!hasKickstart) {
-				Text(
-					"Kickstart ROM not configured — select an A1200 Kickstart in the Kickstart row or Settings.",
-					style = TextStyle(fontSize = 9.sp, color = Color(0xFFFF8A65))
-				)
-			}
-		}
-		Spacer(Modifier.width(4.dp))
-		Button(
-			onClick        = onLaunch,
-			enabled        = hasKickstart,
-			colors         = ButtonDefaults.buttonColors(containerColor = BtnGreenStart),
-			modifier       = Modifier.height(30.dp),
-			contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
-		) {
-			Text("LAUNCH", fontSize = 11.sp, color = TextPrimary)
-		}
-		Spacer(Modifier.width(4.dp))
-		IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
-			Icon(
-				Icons.Default.Close,
-				contentDescription = "Dismiss",
-				tint     = TextSecondary,
-				modifier = Modifier.size(16.dp)
 			)
 		}
 	}
@@ -1450,6 +1337,13 @@ private fun artworkFor(model: AmigaModel): Int = when (model) {
 	AmigaModel.CD32,
 	AmigaModel.CDTV  -> R.drawable.featured_cd32
 	else             -> R.drawable.featured_a500
+}
+
+private fun isAgsMounted(settingsDrives: List<String>, agsDrives: List<String>?): Boolean {
+	if (agsDrives == null) return false
+	return agsDrives.withIndex()
+		.filter { it.value.isNotBlank() }
+		.all { (slot, path) -> settingsDrives.getOrNull(slot) == path }
 }
 
 @Composable

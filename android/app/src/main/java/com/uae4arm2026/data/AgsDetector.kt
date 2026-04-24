@@ -111,17 +111,19 @@ object AgsDetector {
             // Any configured library folder's parent (user may preserve folder structure)
             FileCategory.entries.forEach { cat ->
                 FileManager.getCategoryLibraryPath(context, cat)?.let { path ->
-                    File(path).parentFile?.let { add(it) }
+                    try {
+                        File(path).parentFile?.let { add(it) }
+                    } catch (_: Exception) {}
                 }
             }
-        }.filterNotNull().distinctBy { it.canonicalPath }
+        }.filterNotNull().distinctBy { it.absolutePath }
 
         for (root in roots) {
             val candidate = File(root, "AGS_UAE")
             if (isValidAgsDir(context, candidate)) {
                 return AgsInstall(
                     agsDir  = candidate,
-                    romFile = findRom(candidate),
+                    romFile = findRom(context, candidate),
                 )
             }
         }
@@ -132,39 +134,33 @@ object AgsDetector {
      * Resolve an AGS install from the persisted library path.
      */
     fun detectFromAgsLibraryPath(context: Context): AgsInstall? {
-        val path = FileManager.getCategoryLibraryPath(context, FileCategory.WHDLOAD_GAMES)
-            ?: return null
-        return detectFromPath(path)
+        val paths = listOfNotNull(
+            FileManager.getCategoryLibraryPath(context, FileCategory.HARD_DRIVES),
+            FileManager.getCategoryLibraryPath(context, FileCategory.WHDLOAD_GAMES),
+        )
+        return paths.firstNotNullOfOrNull { path -> detectFromPath(context, path) }
     }
 
     /**
      * Resolve an AGS install from a user-selected directory.
      * Accepts either the AGS_UAE directory itself or a parent directory that contains it.
      */
-    fun detectFromPath(path: String): AgsInstall? {
+    fun detectFromPath(context: Context, path: String): AgsInstall? {
         android.util.Log.d("AgsDetector", "Checking path: $path")
         val selected = File(path)
         val candidates = buildList {
             add(selected)
             add(File(selected, "AGS_UAE"))
-        }.distinctBy {
-            try {
-                it.canonicalPath
-            } catch (_: Exception) {
-                it.absolutePath
-            }
-        }
+        }.distinctBy { it.absolutePath }
 
         val agsDir = candidates.firstOrNull { dir ->
-            val isAgsNamed = dir.name.equals("AGS_UAE", ignoreCase = true)
-            val hasRequired = REQUIRED_HDFS.any { File(dir, it).exists() }
-            isAgsNamed || hasRequired
+            REQUIRED_HDFS.any { exists(context, dir, it) }
         } ?: return null
 
         android.util.Log.i("AgsDetector", "Detected AGS at: ${agsDir.absolutePath}")
         return AgsInstall(
             agsDir = agsDir,
-            romFile = findRom(agsDir),
+            romFile = findRom(context, agsDir),
         )
     }
 
@@ -173,20 +169,21 @@ object AgsDetector {
      * This is used after app reload so AGS launches continue to use the dedicated AGS config
      * without forcing the user to remount.
      */
-    fun detectFromMountedDrives(paths: List<String>): AgsInstall? {
+    fun detectFromMountedDrives(context: Context, paths: List<String>): AgsInstall? {
         val nonEmpty = paths.filter { it.isNotBlank() }
         if (nonEmpty.isEmpty()) return null
 
-        val files = nonEmpty.map { File(it) }
-        val parent = files.firstOrNull()?.parentFile ?: return null
-        if (files.any { it.parentFile?.absolutePath != parent.absolutePath }) return null
+        val files = nonEmpty.map { File(it) }.filterNot { it.isDirectory }
+        if (files.isEmpty()) return null
 
-        val requiredPresent = REQUIRED_HDFS.all { name -> File(parent, name).exists() }
+        val parent = files.firstOrNull()?.parentFile ?: return null
+        
+        val requiredPresent = REQUIRED_HDFS.any { name -> exists(context, parent, name) }
         if (!requiredPresent) return null
 
         return AgsInstall(
             agsDir = parent,
-            romFile = findRom(parent),
+            romFile = findRom(context, parent),
         )
     }
 
@@ -204,23 +201,29 @@ object AgsDetector {
         val knownPresentByDevice = linkedMapOf<String, File>()
         val extraImages = mutableListOf<File>()
 
-        val files = agsDir.listFiles()
+        // Check for Workbench.hdf or any file starting with 'Workbench' that is an HDF
+        val files = try { agsDir.listFiles() } catch (_: Exception) { null }
         if (files != null) {
             files.forEach { file ->
-                if (!file.isFile) return@forEach
-
+                val nameLower = file.name.lowercase()
                 val ext = file.extension.lowercase()
                 if (ext !in AGS_DRIVE_IMAGE_EXTENSIONS) return@forEach
 
-                val mappedDevice = knownByFilename[file.name.lowercase()]
-                if (mappedDevice != null) {
-                    knownPresentByDevice[mappedDevice] = file
+                if (nameLower.startsWith("workbench")) {
+                    knownPresentByDevice["DH0"] = file
                 } else {
-                    extraImages += file
+                    val mappedDevice = knownByFilename[nameLower]
+                    if (mappedDevice != null) {
+                        knownPresentByDevice[mappedDevice] = file
+                    } else {
+                        extraImages += file
+                    }
                 }
             }
-        } else {
-            // listFiles failed, try explicit exists check for known files
+        }
+
+        // If listFiles was empty or failed, fallback to explicit existence checks for core drives
+        if (knownPresentByDevice.isEmpty()) {
             ALL_HDF_MOUNTS.forEach { (dev, filename) ->
                 if (exists(context, agsDir, filename)) {
                     knownPresentByDevice[dev] = File(agsDir, filename)
@@ -245,19 +248,47 @@ object AgsDetector {
         return ordered
     }
 
-    private fun findRom(agsDir: File): String? {
-        val parent = agsDir.parentFile ?: return null
+    private fun findRom(context: Context, agsDir: File): String? {
+        val parent = try { agsDir.parentFile } catch (_: Exception) { null } ?: return null
         val candidates = listOf(
-            File(parent, "roms/AmigaForever/amiga-os-310-a1200.rom"),
-            File(parent, "roms/amiga-os-310-a1200.rom"),
-            File(parent, "roms/kick31.rom"),
-            File(parent, "roms/kick310.rom"),
-            File(parent, "Kickstarts/amiga-os-310-a1200.rom"),
-            File(parent, "Kickstarts/kick31.rom"),
-            File(agsDir.parentFile, "roms/amiga-os-310-a1200.rom"),
-            File(agsDir.parentFile, "roms/kick31.rom")
+            "kick31.rom",
+            "kick310.rom",
+            "amiga-os-310-a1200.rom",
+            "roms/AmigaForever/amiga-os-310-a1200.rom",
+            "roms/amiga-os-310-a1200.rom",
+            "roms/kick31.rom",
+            "roms/kick310.rom",
+            "Kickstarts/amiga-os-310-a1200.rom",
+            "Kickstarts/kick31.rom",
+            "AGS_UAE/roms/amiga-os-310-a1200.rom",
+            "AGS_UAE/roms/kick31.rom",
+            "AGS_UAE/kick31.rom",
+            "AGS_UAE/kick310.rom"
         )
-        return candidates.firstOrNull { it.isFile }?.absolutePath
+        
+        candidates.forEach { relPath ->
+            val parts = relPath.split('/')
+            var current = parent
+            var found = true
+            for (part in parts) {
+                if (!exists(context, current, part)) {
+                    found = false
+                    break
+                }
+                current = File(current, part)
+            }
+            if (found) return current.absolutePath
+        }
+
+        // Also check app-internal roms folder
+        val internalRomsDir = File(FileManager.getAppStoragePath(context), "roms")
+        val internalCandidates = listOf("kick31.rom", "kick310.rom", "amiga-os-310-a1200.rom")
+        internalCandidates.forEach { name ->
+            val f = File(internalRomsDir, name)
+            if (f.exists()) return f.absolutePath
+        }
+
+        return null
     }
 
     /**
@@ -267,11 +298,8 @@ object AgsDetector {
     fun mountableHardDrives(context: Context, install: AgsInstall): List<String> {
         val drives = agsDriveAssignments(context, install.agsDir).map { (_, file) -> file.absolutePath }.toMutableList()
         
-        val sharedDir = File(install.agsDir, "SHARED").let { 
-            if (it.isDirectory) it else File(install.agsDir.parentFile, "SHARED") 
-        }
-        
-        if (sharedDir.isDirectory) {
+        val sharedDir = getAgsSharedDir(install.agsDir)
+        if (sharedDir != null) {
             while (drives.size < 11) {
                 drives.add("")
             }
@@ -279,6 +307,16 @@ object AgsDetector {
         }
         
         return drives
+    }
+
+    private fun getAgsSharedDir(agsDir: File): File? {
+        val candidates = listOf(
+            File(agsDir, "SHARED"),
+            File(agsDir, "Shared"),
+            File(agsDir.parentFile, "SHARED"),
+            File(agsDir.parentFile, "Shared")
+        )
+        return candidates.firstOrNull { it.isDirectory }
     }
 
     // ── Config generation ────────────────────────────────────────────────────
@@ -356,9 +394,8 @@ object AgsDetector {
             mountIndex++
         }
 
-        val sharedDir = File(install.agsDir, "SHARED").let { if (it.isDirectory) it else File(install.agsDir.parentFile, "SHARED") }
-        if (sharedDir.isDirectory) {
-            val path = sharedDir.absolutePath
+        getAgsSharedDir(install.agsDir)?.let { shared ->
+            val path = shared.absolutePath
             sb.appendLine("filesystem2=rw,$AGS_SHARED_DEVICE:SHARED:\"$path\",$BOOTPRI_NOAUTOBOOT")
             sb.appendLine("uaehf${mountIndex}_bootpri=$BOOTPRI_NOAUTOBOOT")
         }

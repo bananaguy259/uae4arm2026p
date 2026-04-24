@@ -374,26 +374,9 @@ object FileManager {
 		}
 	}
 
-	fun detectCategoryFolders(context: Context, treeUri: Uri): Map<FileCategory, Pair<String, Uri>> {
+	fun detectCategoryFolders(context: Context, treeUri: Uri): Map<FileCategory, String> {
 		val rootPath = resolveDocumentPath(context, treeUri) ?: return emptyMap()
-		val detectedPaths = detectCategoryFolders(rootPath)
-		
-		return detectedPaths.mapNotNull { (category, path) ->
-			val docId = try {
-				val extRoot = Environment.getExternalStorageDirectory().absolutePath
-				if (path.startsWith(extRoot)) {
-					"primary:" + path.removePrefix(extRoot).trimStart('/')
-				} else {
-					val m = Regex("^/storage/([^/]+)(/.*)?$").find(path) ?: return@mapNotNull null
-					val vol = m.groupValues[1]
-					val rel = m.groupValues[2].trimStart('/')
-					"$vol:$rel"
-				}
-			} catch (_: Exception) { return@mapNotNull null }
-			
-			val docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
-			category to (path to docUri)
-		}.toMap()
+		return detectCategoryFolders(rootPath)
 	}
 
 	fun detectCategoryFolders(rootPath: String): Map<FileCategory, String> {
@@ -455,6 +438,7 @@ object FileManager {
 		val appRoot = getAppStoragePath(context).trim()
 		if (appRoot.isEmpty()) return false
 		if (path.startsWith("/proc/self/fd/", ignoreCase = true)) return true
+		if (path.startsWith(context.getCacheDir().getAbsolutePath(), ignoreCase = true)) return true
 		return path.startsWith(appRoot, ignoreCase = true)
 	}
 
@@ -599,7 +583,7 @@ object FileManager {
 		}
 
 		if (bestMatchCategory != null) {
-			val category = bestMatchCategory!!
+			val category = bestMatchCategory
 			val libPath = getCategoryLibraryPath(context, category)!!
 			val treeUriString = getCategoryLibraryUri(context, category)!!
 			
@@ -620,10 +604,14 @@ object FileManager {
 			if (relativePath.isEmpty()) return treeUri
 
 			if (treeUri.authority == "com.android.externalstorage.documents") {
-				val parts = rootId.split(":")
-				if (parts.size >= 2) {
-					val newId = "${parts[0]}:${parts[1]}/$relativePath"
-					return DocumentsContract.buildDocumentUriUsingTree(treeUri, newId)
+				try {
+					val parts = rootId.split(":")
+					if (parts.size >= 2) {
+						val newId = "${parts[0]}:${parts[1]}/$relativePath"
+						return DocumentsContract.buildDocumentUriUsingTree(treeUri, newId)
+					}
+				} catch (e: Exception) {
+					Log.w(TAG, "Failed fast-path URI build for $path", e)
 				}
 			}
 

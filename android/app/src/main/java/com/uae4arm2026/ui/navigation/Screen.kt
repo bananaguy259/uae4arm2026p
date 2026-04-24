@@ -4,7 +4,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.TravelExplore
@@ -22,9 +21,7 @@ sealed class Screen(
 	data object FileManager : Screen("files", R.string.nav_files, Icons.Default.Folder)
 	data object FileManagerDownloads : Screen("files/downloads", R.string.file_manager_section_downloads, Icons.Default.Download)
 	data object Configurations : Screen("configs", R.string.nav_configs, Icons.Default.Save)
-	data object About : Screen("about", R.string.nav_about, Icons.Default.Info)
 	// Not in bottom nav — shown only on first launch
-	data object Setup : Screen("setup", R.string.nav_home, Icons.Default.TravelExplore)
 	data object Onboarding : Screen("onboarding", R.string.nav_home, Icons.Default.TravelExplore)
 
 	companion object {

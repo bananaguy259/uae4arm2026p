@@ -50,7 +50,7 @@ import com.uae4arm2026.data.model.AmigaFile
 import com.uae4arm2026.data.model.FileCategory
 import com.uae4arm2026.ui.viewmodel.SettingsViewModel
 
-// ── SAF URI ↔ path helpers (same logic as QuickStartScreen) ──────────────────
+// ── SAF URI ↔ path helpers ───────────────────────────────────────────────────
 
 private fun docIdToPath(docId: String): String? {
 	val idx = docId.indexOf(':')
@@ -150,34 +150,26 @@ fun StorageTab(viewModel: SettingsViewModel) {
 						}
 						Spacer(modifier = Modifier.height(8.dp))
 
-						if (roms.isEmpty()) {
-							Text(
-								stringResource(R.string.settings_storage_no_roms_found),
-								style = MaterialTheme.typography.bodySmall,
-								color = MaterialTheme.colorScheme.error
-							)
-						} else {
+						FileDropdown(
+							label = stringResource(R.string.settings_storage_rom_file_label),
+							files = roms,
+							selectedPath = settings.romFile,
+							category = FileCategory.ROMS,
+							context = context,
+							onSelect = { viewModel.updateSettings { s -> s.copy(romFile = it) } },
+							onClear = { viewModel.updateSettings { s -> s.copy(romFile = "") } }
+						)
+						if (showExtendedRom) {
+							Spacer(modifier = Modifier.height(8.dp))
 							FileDropdown(
-								label = stringResource(R.string.settings_storage_rom_file_label),
+								label = stringResource(R.string.settings_storage_rom_ext_file_label),
 								files = roms,
-								selectedPath = settings.romFile,
+								selectedPath = settings.romExtFile,
 								category = FileCategory.ROMS,
 								context = context,
-								onSelect = { viewModel.updateSettings { s -> s.copy(romFile = it) } },
-								onClear = { viewModel.updateSettings { s -> s.copy(romFile = "") } }
+								onSelect = { viewModel.updateSettings { s -> s.copy(romExtFile = it) } },
+								onClear = { viewModel.updateSettings { s -> s.copy(romExtFile = "") } }
 							)
-							if (showExtendedRom) {
-								Spacer(modifier = Modifier.height(8.dp))
-								FileDropdown(
-									label = stringResource(R.string.settings_storage_rom_ext_file_label),
-									files = roms,
-									selectedPath = settings.romExtFile,
-									category = FileCategory.ROMS,
-									context = context,
-									onSelect = { viewModel.updateSettings { s -> s.copy(romExtFile = it) } },
-									onClear = { viewModel.updateSettings { s -> s.copy(romExtFile = "") } }
-								)
-							}
 						}
 					}
 				}
@@ -403,36 +395,35 @@ private fun FileDropdown(
 						}
 					)
 				}
-				if (category != FileCategory.ROMS) {
-					// Import from file picker — opens in category subfolder
-					Divider()
-					DropdownMenuItem(
-						text = { Text("Import...") },
-						onClick = {
-							expanded = false
-							pendingImportCallback = onSelect
-							val dir = FileManager.getEffectiveCategoryDir(context, category)
-							val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-								addCategory(Intent.CATEGORY_OPENABLE)
-								type = "*/*"
-								if (dir.exists()) {
-									pathToInitialUri(dir.absolutePath)?.let {
-										putExtra(DocumentsContract.EXTRA_INITIAL_URI, it)
-									}
+				
+				// Import from file picker — opens in category subfolder
+				Divider()
+				DropdownMenuItem(
+					text = { Text("Import...") },
+					onClick = {
+						expanded = false
+						pendingImportCallback = onSelect
+						val dir = FileManager.getEffectiveCategoryDir(context, category)
+						val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+							addCategory(Intent.CATEGORY_OPENABLE)
+							type = "*/*"
+							if (dir.exists()) {
+								pathToInitialUri(dir.absolutePath)?.let {
+									putExtra(DocumentsContract.EXTRA_INITIAL_URI, it)
 								}
 							}
-							importLauncher.launch(intent)
+						}
+						importLauncher.launch(intent)
+					}
+				)
+				if (category != FileCategory.ROMS && onPickDir != null) {
+					DropdownMenuItem(
+						text = { Text("Mount Folder...") },
+						onClick = {
+							expanded = false
+							onPickDir()
 						}
 					)
-					if (onPickDir != null) {
-						DropdownMenuItem(
-							text = { Text("Mount Folder...") },
-							onClick = {
-								expanded = false
-								onPickDir()
-							}
-						)
-					}
 				}
 			}
 		}
