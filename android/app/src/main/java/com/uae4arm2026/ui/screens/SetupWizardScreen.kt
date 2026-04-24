@@ -1,5 +1,6 @@
 package com.uae4arm2026.ui.screens
 
+import android.content.Context
 import android.net.Uri
 import android.os.Environment
 import android.provider.DocumentsContract
@@ -18,10 +19,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
@@ -29,6 +32,7 @@ import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -131,7 +135,7 @@ fun SetupWizardScreen(navController: NavController) {
 			}
 			
 			if (agsInstall != null) {
-				val drives = AgsDetector.mountableHardDrives(agsInstall!!).ifEmpty { listOf("") }
+				val drives = AgsDetector.mountableHardDrives(context, agsInstall!!).ifEmpty { listOf("") }
 				settingsViewModel.applyModel(com.uae4arm2026.data.model.AmigaModel.A1200)
 				settingsViewModel.updateSettings { s ->
 					s.copy(
@@ -180,24 +184,32 @@ fun SetupWizardScreen(navController: NavController) {
 			rootPath = path
 			step = WizardStep.SCANNING
 			scope.launch {
-				val detected = withContext(Dispatchers.IO) {
-					FileManager.detectCategoryFolders(context, uri)
-				}
-				assignedPaths.clear()
-				detected.forEach { (category, pair) ->
-					val (resolvedPath, docUri) = pair
-					assignedPaths[category] = resolvedPath
-					FileManager.setCategoryLibraryPath(context, category, resolvedPath, docUri.toString())
-				}
-				
-				val ags = withContext(Dispatchers.IO) { AgsDetector.detectFromPath(path) }
-				if (ags != null) {
-					agsInstall = ags
-				}
+				try {
+					android.util.Log.d("SetupWizard", "Starting background scan of $path")
+					val detected = withContext(Dispatchers.IO) {
+						FileManager.detectCategoryFolders(context, uri)
+					}
+					android.util.Log.d("SetupWizard", "Scan complete. Detected ${detected.size} categories")
+					
+					assignedPaths.clear()
+					detected.forEach { (category, pair) ->
+						val (resolvedPath, docUri) = pair
+						assignedPaths[category] = resolvedPath
+						FileManager.setCategoryLibraryPath(context, category, resolvedPath, docUri.toString())
+					}
+					
+					val ags = withContext(Dispatchers.IO) { AgsDetector.detectFromPath(path) }
+					if (ags != null) {
+						agsInstall = ags
+					}
 
-				if (detected.isNotEmpty() || agsInstall != null) {
-					finish()
-				} else {
+					if (detected.isNotEmpty() || agsInstall != null) {
+						finish()
+					} else {
+						step = WizardStep.ASSIGN
+					}
+				} catch (e: Exception) {
+					android.util.Log.e("SetupWizard", "Scan failed", e)
 					step = WizardStep.ASSIGN
 				}
 			}
@@ -209,6 +221,9 @@ fun SetupWizardScreen(navController: NavController) {
 			WizardStep.FOLDER_PICK ->
 				FolderPickStep(
 					modifier     = Modifier.fillMaxSize().padding(padding).padding(24.dp),
+					context      = context,
+					navController = navController,
+					prefs        = prefs,
 					onPickFolder = { pickParentFolder() },
 					onSkip       = { finish() }
 				)
@@ -217,6 +232,7 @@ fun SetupWizardScreen(navController: NavController) {
 			WizardStep.ASSIGN ->
 				AssignStep(
 					modifier       = Modifier.fillMaxSize().padding(padding),
+					context        = context,
 					rootPath       = rootPath,
 					assignedPaths  = assignedPaths,
 					agsInstall     = agsInstall,
@@ -248,6 +264,9 @@ fun SetupWizardScreen(navController: NavController) {
 @Composable
 private fun FolderPickStep(
 	modifier: Modifier = Modifier,
+	context: Context,
+	navController: NavController,
+	prefs: AppPreferences,
 	onPickFolder: () -> Unit,
 	onSkip: () -> Unit
 ) {
@@ -296,6 +315,23 @@ private fun FolderPickStep(
 			Spacer(Modifier.width(8.dp))
 			Text("Browse & Pick Amiga Folder")
 		}
+		
+		Spacer(Modifier.height(8.dp))
+		TextButton(
+			onClick = {
+				prefs.clearAll()
+				navController.navigate(Screen.Setup.route) {
+					popUpTo(0) { inclusive = true }
+				}
+			},
+			modifier = Modifier.fillMaxWidth(),
+			colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+		) {
+			Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+			Spacer(Modifier.width(8.dp))
+			Text("Reset App Data & Start Over")
+		}
+
 		TextButton(onClick = onSkip, modifier = Modifier.fillMaxWidth()) {
 			Text("Skip for now")
 		}
@@ -337,6 +373,7 @@ private fun ScanningStep(modifier: Modifier = Modifier) {
 @Composable
 private fun AssignStep(
 	modifier: Modifier = Modifier,
+	context: Context,
 	rootPath: String,
 	assignedPaths: Map<FileCategory, String>,
 	agsInstall: AgsDetector.AgsInstall?,
@@ -376,6 +413,19 @@ private fun AssignStep(
 			install = agsInstall,
 			onPick = onPickAgs
 		)
+		
+		if (agsInstall != null) {
+			TextButton(
+				onClick = {
+					FileManager.setCategoryLibraryPath(context, FileCategory.WHDLOAD_GAMES, null)
+					// Trigger a UI refresh by simulating a pick result of null
+					onPickCategory(FileCategory.WHDLOAD_GAMES) 
+				},
+				modifier = Modifier.padding(start = 8.dp)
+			) {
+				Text("Clear AGS Folder", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
+			}
+		}
 
 		FileCategory.entries.forEach { category ->
 			CategoryAssignRow(

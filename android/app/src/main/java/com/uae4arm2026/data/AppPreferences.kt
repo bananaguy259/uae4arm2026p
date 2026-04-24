@@ -101,6 +101,15 @@ class AppPreferences private constructor(context: Context) {
 		prefs.edit { putBoolean(KEY_HAS_COMPLETED_SETUP, done) }
 	}
 
+	fun clearAll() {
+		prefs.edit { clear() }
+		useDynamicColor.value = false
+		themeMode.value = "system"
+		hasSeenWelcome.value = false
+		hasCompletedSetup.value = false
+		recentLaunches.value = emptyList()
+	}
+
 	companion object {
 		private const val KEY_DYNAMIC_COLOR = "use_dynamic_color"
 		private const val KEY_THEME_MODE = "theme_mode"

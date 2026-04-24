@@ -375,58 +375,24 @@ object FileManager {
 	}
 
 	fun detectCategoryFolders(context: Context, treeUri: Uri): Map<FileCategory, Pair<String, Uri>> {
-		val resultDocs = mutableMapOf<FileCategory, Uri>()
-		val resolver = context.contentResolver
-		val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
-			treeUri,
-			DocumentsContract.getTreeDocumentId(treeUri)
-		)
-
-		val keywords = mapOf(
-			FileCategory.ROMS to listOf("kickstart", "kick", "rom", "roms", "bios"),
-			FileCategory.FLOPPIES to listOf("floppy", "floppies", "adf", "disk", "disks", "df0", "df1"),
-			FileCategory.WHDLOAD_GAMES to listOf("whdload", "whd", "lha", "game", "games"),
-			FileCategory.CD_IMAGES to listOf("cd", "cds", "cdrom", "cdroms", "iso", "disc", "discs"),
-			FileCategory.HARD_DRIVES to listOf("hdf", "harddrive", "harddrives", "hdd")
-		)
+		val rootPath = resolveDocumentPath(context, treeUri) ?: return emptyMap()
+		val detectedPaths = detectCategoryFolders(rootPath)
 		
-		val sortedPairs = keywords.entries
-			.flatMap { (cat, kws) -> kws.map { kw -> cat to kw } }
-			.sortedByDescending { it.second.length }
-
-		val subdirs = mutableListOf<Pair<String, Uri>>()
-
-		resolver.query(childrenUri, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_MIME_TYPE), null, null, null)?.use { cursor ->
-			val nameIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
-			val idIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
-			val mimeIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
-
-			while (cursor.moveToNext()) {
-				val mime = cursor.getString(mimeIndex)
-				val name = cursor.getString(nameIndex) ?: continue
-				if (DocumentsContract.Document.MIME_TYPE_DIR == mime) {
-					if (!name.startsWith(".")) {
-						val docId = cursor.getString(idIndex)
-						subdirs.add(name to DocumentsContract.buildDocumentUriUsingTree(treeUri, docId))
-					}
+		return detectedPaths.mapNotNull { (category, path) ->
+			val docId = try {
+				val extRoot = Environment.getExternalStorageDirectory().absolutePath
+				if (path.startsWith(extRoot)) {
+					"primary:" + path.removePrefix(extRoot).trimStart('/')
+				} else {
+					val m = Regex("^/storage/([^/]+)(/.*)?$").find(path) ?: return@mapNotNull null
+					val vol = m.groupValues[1]
+					val rel = m.groupValues[2].trimStart('/')
+					"$vol:$rel"
 				}
-			}
-		}
-
-		for ((name, docUri) in subdirs) {
-			val nameLower = name.lowercase()
-			val nameNorm = nameLower.replace(Regex("[-_ ]+"), "")
-			for ((category, kw) in sortedPairs) {
-				if (category !in resultDocs && (nameLower.contains(kw) || nameNorm.contains(kw))) {
-					resultDocs[category] = docUri
-					break
-				}
-			}
-		}
-
-		return resultDocs.mapNotNull { (category, docUri) ->
-			val path = resolveDocumentPath(context, docUri)
-			if (path != null) category to (path to docUri) else null
+			} catch (_: Exception) { return@mapNotNull null }
+			
+			val docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
+			category to (path to docUri)
 		}.toMap()
 	}
 
