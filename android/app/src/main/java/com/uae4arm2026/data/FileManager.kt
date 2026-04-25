@@ -48,14 +48,33 @@ object FileManager {
 	}
 
 	/**
+	 * Resolve a content:// or file:// URI to a real filesystem path without copying.
+	 * Returns null if the URI cannot be resolved to a path (e.g. cloud-storage providers).
+	 * The returned path is suitable for passing to native code.
+	 */
+	fun resolveToFilePath(context: Context, uri: Uri): String? {
+		val resolved = resolveDocumentPath(context, uri) ?: return null
+		return resolved.takeIf { File(it).exists() }
+	}
+
+	/**
 	 * Import a file from a SAF content:// URI into the appropriate app storage directory.
+	 * If the URI resolves to a real filesystem path that the emulator can access directly
+	 * (external-storage provider), the file is used in place without copying.
+	 * Only falls back to copying for cloud / non-resolvable providers.
 	 */
 	fun importFile(context: Context, uri: Uri, category: FileCategory): String? {
 		resolveDocumentPath(context, uri)?.let { resolvedPath ->
 			val resolvedFile = File(resolvedPath)
-			if (resolvedFile.exists() && resolvedFile.isFile && isAppOwnedPath(context, resolvedPath)) {
-				resolvedFile.parentFile?.absolutePath?.let { setCategoryLibraryPath(context, category, it) }
-				Log.d(TAG, "Using app-owned file in place: $resolvedPath")
+			if (resolvedFile.exists() && resolvedFile.isFile) {
+				// Only update the category library path when the file is inside app-owned
+				// storage (i.e. it was already imported previously). For files on external
+				// storage the user has their own library directory configured via the
+				// "Set Folder" flow in Settings, so we intentionally leave that unchanged.
+				if (isAppOwnedPath(context, resolvedPath)) {
+					resolvedFile.parentFile?.absolutePath?.let { setCategoryLibraryPath(context, category, it) }
+				}
+				Log.d(TAG, "Using file in place (resolved path): $resolvedPath")
 				return resolvedPath
 			}
 		}

@@ -526,7 +526,14 @@ fun Uae4ArmHomeScreen(
 					openFilePicker(FileCategory.ROMS) { path ->
 						settingsViewModel.updateSettings { s -> s.copy(romFile = path) }
 					}
-				}
+				},
+				onPickExtRomFile = if (isCdConsoleModel) {
+					{
+						openFilePicker(FileCategory.ROMS) { path ->
+							settingsViewModel.updateSettings { s -> s.copy(romExtFile = path) }
+						}
+					}
+				} else null
 			)
 
 			// ── Model area ────────────────────────────────────────────
@@ -864,14 +871,13 @@ fun Uae4ArmHomeScreen(
 @Composable
 private fun KickstartRow(
 	settings: EmulatorSettings,
-	onPickRomFile: () -> Unit
+	onPickRomFile: () -> Unit,
+	onPickExtRomFile: (() -> Unit)? = null
 ) {
 	SectionBox(
 		bgColor     = BgKick,
 		borderColor = BorderKick,
-		modifier    = Modifier
-			.fillMaxWidth()
-			.clickable(onClick = onPickRomFile)
+		modifier    = Modifier.fillMaxWidth()
 	) {
 		Row(
 			verticalAlignment = Alignment.CenterVertically,
@@ -887,15 +893,42 @@ private fun KickstartRow(
 			)
 			Spacer(Modifier.width(8.dp))
 			Column(modifier = Modifier.weight(1f)) {
-				Text(
-					text  = if (settings.romFile.isNotBlank())
-						"KS: " + android.net.Uri.decode(settings.romFile.substringAfterLast('/'))
-					else
-						"Kickstart: (not selected)",
-					color    = if (settings.romFile.isNotBlank()) TextPrimary else TextOrange,
-					fontSize = 11.sp,
-					maxLines = 2
-				)
+				// Main ROM row — always clickable to pick
+				Row(
+					modifier          = Modifier.fillMaxWidth().clickable(onClick = onPickRomFile),
+					verticalAlignment = Alignment.CenterVertically
+				) {
+					Text(
+						text  = if (settings.romFile.isNotBlank())
+							"KS: " + android.net.Uri.decode(settings.romFile.substringAfterLast('/'))
+						else
+							"Kickstart: (not selected)",
+						color    = if (settings.romFile.isNotBlank()) TextPrimary else TextOrange,
+						fontSize = 11.sp,
+						maxLines = 1,
+						overflow = TextOverflow.Ellipsis,
+						modifier = Modifier.weight(1f)
+					)
+				}
+			// Ext ROM row — shown for CD32 / CDTV
+			val pickExtRom = onPickExtRomFile
+			if (pickExtRom != null) {
+				Row(
+					modifier          = Modifier.fillMaxWidth().clickable(onClick = pickExtRom),
+					verticalAlignment = Alignment.CenterVertically
+				) {
+					Text(
+						text  = if (settings.romExtFile.isNotBlank())
+							"EXT: " + android.net.Uri.decode(settings.romExtFile.substringAfterLast('/'))
+						else
+							"Ext ROM: (not selected)",
+						color    = if (settings.romExtFile.isNotBlank()) TextPrimary else TextOrange,
+						fontSize = 11.sp,
+						maxLines = 1,
+						overflow = TextOverflow.Ellipsis,
+						modifier = Modifier.weight(1f)
+					)
+				}
 			}
 		}
 	}

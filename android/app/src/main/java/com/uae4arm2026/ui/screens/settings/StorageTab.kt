@@ -1,9 +1,11 @@
 package com.uae4arm2026.ui.screens.settings
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Environment
 import android.provider.DocumentsContract
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -38,6 +40,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,6 +52,9 @@ import com.uae4arm2026.data.FileManager
 import com.uae4arm2026.data.model.AmigaFile
 import com.uae4arm2026.data.model.FileCategory
 import com.uae4arm2026.ui.viewmodel.SettingsViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 // ── SAF URI ↔ path helpers ───────────────────────────────────────────────────
 
@@ -79,13 +85,20 @@ private fun pathToInitialUri(path: String): Uri? {
 	)
 }
 
-private fun uriToFilePath(uri: Uri): String? = try {
-	docIdToPath(DocumentsContract.getDocumentId(uri))
-} catch (_: Exception) { null }
-
 private fun treeUriToPath(uri: Uri): String? = try {
 	docIdToPath(DocumentsContract.getTreeDocumentId(uri))
 } catch (_: Exception) { null }
+
+/**
+ * Resolve a library-scanned file path to a real filesystem path the emulator can open.
+ * Scanned SAF files have content:// URIs; this converts them to /storage/… paths.
+ * Falls back to the original path string if resolution is not possible (e.g. already a
+ * real path, or the URI is from a cloud provider without a local backing file).
+ */
+private fun resolveLibraryFilePath(context: Context, path: String): String {
+	if (!path.startsWith("content://")) return path
+	return FileManager.resolveToFilePath(context, Uri.parse(path)) ?: path
+}
 
 // ── StorageTab ────────────────────────────────────────────────────────────────
 
@@ -344,16 +357,27 @@ private fun FileDropdown(
 	onPickDir: (() -> Unit)? = null
 ) {
 	var expanded by remember { mutableStateOf(false) }
+	val scope = rememberCoroutineScope()
 	val noneLabel = stringResource(R.string.placeholder_none)
 	val selectedName = if (selectedPath.isEmpty()) noneLabel
 	else selectedPath.substringAfterLast('/')
 
-	// SAF file picker that opens in the category subfolder
+	// SAF file picker — resolves to a real path; falls back to copy for cloud providers.
 	var pendingImportCallback by remember { mutableStateOf<((String) -> Unit)?>(null) }
 	val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
 		val uri = result.data?.data
-		uri?.let { uriToFilePath(it)?.let { path -> pendingImportCallback?.invoke(path) } }
+		val callback = pendingImportCallback
 		pendingImportCallback = null
+		if (uri != null && callback != null) {
+			scope.launch(Dispatchers.IO) {
+				val path = FileManager.importFile(context, uri, category)
+				if (path != null) {
+					withContext(Dispatchers.Main) { callback(path) }
+				} else {
+					Log.e("StorageTab", "Import failed: unable to resolve or copy $uri")
+				}
+			}
+		}
 	}
 
 	Row(
@@ -390,7 +414,9 @@ private fun FileDropdown(
 					DropdownMenuItem(
 						text = { Text(file.name) },
 						onClick = {
-							onSelect(file.path)
+							// Resolve content:// URI to a real path so native code can open it.
+							val path = resolveLibraryFilePath(context, file.path)
+							onSelect(path)
 							expanded = false
 						}
 					)
@@ -472,6 +498,7 @@ private fun CompactFloppyDrive(
 	context: android.content.Context
 ) {
 	var expanded by remember { mutableStateOf(false) }
+	val scope = rememberCoroutineScope()
 	val typeLabel = when (driveType) {
 		0 -> "DD"
 		1 -> "HD"
@@ -480,12 +507,18 @@ private fun CompactFloppyDrive(
 	val selectedName = if (selectedPath.isEmpty()) noneLabel else selectedPath.substringAfterLast('/')
 	val displayText = if (driveType < 0) label else "$label $selectedName"
 
-	// SAF file picker that opens in the floppies subfolder
+	// SAF file picker — resolves to a real path; falls back to copy for cloud providers.
 	val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
 		val uri = result.data?.data
-		uri?.let {
-			val path = uriToFilePath(it)
-			if (path != null) onChange(path, driveType)
+		if (uri != null) {
+			scope.launch(Dispatchers.IO) {
+				val path = FileManager.importFile(context, uri, FileCategory.FLOPPIES)
+				if (path != null) {
+					withContext(Dispatchers.Main) { onChange(path, driveType) }
+				} else {
+					Log.e("StorageTab", "Floppy import failed: unable to resolve or copy $uri")
+				}
+			}
 		}
 	}
 
@@ -521,7 +554,9 @@ private fun CompactFloppyDrive(
 				DropdownMenuItem(
 					text = { Text(file.name, style = MaterialTheme.typography.bodySmall) },
 					onClick = {
-						onChange(file.path, driveType)
+						// Resolve content:// URI to a real path so native code can open it.
+						val path = resolveLibraryFilePath(context, file.path)
+						onChange(path, driveType)
 						expanded = false
 					}
 				)
