@@ -933,6 +933,7 @@ private fun KickstartRow(
 		}
 	}
 }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Left controls column (memory + JIT)
