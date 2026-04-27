@@ -622,7 +622,7 @@ static void ShowEditFilesysHardfileModal()
         if (AmigaButton("..."))
         {
              char* current_root = ua(current_hfdlg.ci.rootdir);
-             OpenFileDialogKey("HD_HDF", "Select hard disk file", "Hardfiles (*.hdf,*.hdz,*.hda,*.img,*.lha,*.zip,*.vhd,*.chd,*.7z){.hdf,.hdz,.hda,.img,.lha,.zip,.vhd,.chd,.7z},All Files (*){.*}", get_harddrive_path());
+             OpenFileDialogKey("HD_HDF", "Select hard disk file", "Hardfiles (*.hdf,*.hdz,*.hda,*.img,*.lha,*.zip,*.vhd,*.7z){.hdf,.hdz,.hda,.img,.lha,.zip,.vhd,.7z},All Files (*){.*}", get_harddrive_path());
              xfree(current_root);
              selecting_hdf_path = true;
         }
@@ -836,7 +836,7 @@ static void ShowCreateHardfileModal()
              char* current_root = ua(current_hfdlg.ci.rootdir);
              // SelectFile for CREATE needs different handling? OpenFileDialog helper handles create too?
              // Usually just picking a path is enough.
-             OpenFileDialogKey("HD_CREATE_HDF", "Select new hard disk file", "Hardfiles (*.hdf,*.hdz,*.hda,*.img,*.vhd,*.chd){.hdf,.hdz,.hda,.img,.vhd,.chd},All Files (*){.*}", get_harddrive_path(), true);
+             OpenFileDialogKey("HD_CREATE_HDF", "Select new hard disk file", "Hardfiles (*.hdf,*.hdz,*.hda,*.img,*.vhd){.hdf,.hdz,.hda,.img,.vhd},All Files (*){.*}", get_harddrive_path(), true);
              xfree(current_root);
              selecting_create_hdf_path = true;
         }

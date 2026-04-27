@@ -660,20 +660,57 @@ typedef int32_t uae_atomic;
 #endif
 
 /* MinGW's fopen does not support the glibc 'e' (O_CLOEXEC) mode flag.
- * Strip it on Windows since close-on-exec is not relevant there. */
-#ifdef _WIN32
+ * Strip it on Windows since close-on-exec is not relevant there.
+ *
+ * On Android, scoped-storage media is bridged as app-private paths like
+ * .../cache/fd_<n>/name. Reopening those paths by name re-triggers filesystem
+ * permission checks, so duplicate the already-open fd instead.
+ */
+#if defined(_WIN32) || defined(__ANDROID__)
 #include <cstdio>
 #include <cstring>
+#if defined(__ANDROID__)
+#include <cerrno>
+#include <cstdlib>
+#include <unistd.h>
+#include <sys/stat.h>
+#endif
 static inline FILE* uae_fopen(const char* path, const char* mode)
 {
-	char winmode[16];
-	int j = 0;
-	for (int i = 0; mode[i] && j < 15; i++) {
-		if (mode[i] != 'e')
-			winmode[j++] = mode[i];
-	}
-	winmode[j] = '\0';
-	return fopen(path, winmode);
+#if defined(__ANDROID__)
+   if (path && mode) {
+      const char* marker = strstr(path, "/cache/fd_");
+      struct stat bridged_stat;
+      if (marker != nullptr && stat(path, &bridged_stat) == 0) {
+         char* endptr = nullptr;
+         const long bridged_fd = strtol(marker + 10, &endptr, 10);
+         if (endptr != nullptr && endptr != marker + 10 && *endptr == '/' && bridged_fd >= 0) {
+            const int dup_fd = dup(static_cast<int>(bridged_fd));
+            if (dup_fd >= 0) {
+               FILE* fp = fdopen(dup_fd, mode);
+               if (fp != nullptr)
+                  return fp;
+               const int saved_errno = errno;
+               close(dup_fd);
+               errno = saved_errno;
+               return nullptr;
+            }
+         }
+      }
+   }
+#endif
+#if defined(_WIN32)
+   char winmode[16];
+   int j = 0;
+   for (int i = 0; mode[i] && j < 15; i++) {
+      if (mode[i] != 'e')
+         winmode[j++] = mode[i];
+   }
+   winmode[j] = '\0';
+   return fopen(path, winmode);
+#else
+   return fopen(path, mode);
+#endif
 }
 #define fopen(path, mode) uae_fopen(path, mode)
 #endif

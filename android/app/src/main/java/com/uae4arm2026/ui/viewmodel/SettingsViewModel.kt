@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.uae4arm2026.data.AppPreferences
 import com.uae4arm2026.data.ConfigGenerator
 import com.uae4arm2026.data.FileRepository
+import com.uae4arm2026.data.MediaPathHelper
 import java.io.File
 import com.uae4arm2026.data.model.AmigaFile
 import com.uae4arm2026.data.model.AmigaModel
@@ -37,7 +38,13 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
 	init {
 		restoreLastSession()
-		settings = applyConstraints(settings)
+		val constrainedSettings = applyConstraints(settings)
+		if (constrainedSettings != settings) {
+			settings = constrainedSettings
+			saveLastSession()
+		} else {
+			settings = constrainedSettings
+		}
 		viewModelScope.launch {
 			repository.rescan()
 			autoSelectDefaultRomIfNeeded(availableRoms.value)
@@ -109,17 +116,17 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 	private fun autoSelectDefaultRomIfNeeded(roms: List<AmigaFile>) {
 		if (roms.isEmpty()) return
 
+		val context = getApplication<Application>()
 		val model = settings.baseModel
 		// CD32 and CDTV require an extended ROM in addition to the Kickstart.
 		// Always re-check the ext ROM for these models so it gets filled in even
 		// when the kick ROM was already set (e.g. carried over from a previous session).
 		val needsExt = model == AmigaModel.CD32 || model == AmigaModel.CDTV
-		val extRomMissing = needsExt && (settings.romExtFile.isBlank() || !File(settings.romExtFile).exists())
+		val extRomMissing = needsExt && !MediaPathHelper.canAccessPath(context, settings.romExtFile)
 
-		// Check if current ROM and floppy files still exist. If not, don't return early
-		// so that auto-selection can find a valid alternative from the scanned repository.
-		if (settings.romFile.isNotBlank() && File(settings.romFile).exists() && !extRomMissing) {
-			if (settings.floppy0.isBlank() || File(settings.floppy0).exists()) return
+		// Check if current ROM and floppy files still exist.
+		if (MediaPathHelper.canAccessPath(context, settings.romFile) && !extRomMissing) {
+			if (settings.floppy0.isBlank() || MediaPathHelper.canAccessPath(context, settings.floppy0)) return
 		}
 
 		val selectedRoms = selectRomsForModel(model, roms)
@@ -320,11 +327,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
 	fun generateLaunchArgs(): Array<String> {
 		val configFile = ConfigGenerator.writeConfig(getApplication(), settings, ".current_settings.uae")
-		val preservedUnknownLines = ConfigParser.sanitizeUnknownLines(currentUnknownLines)
-		if (preservedUnknownLines.isNotEmpty()) {
-			configFile.appendText("\n; Preserved settings from original config\n")
-			preservedUnknownLines.forEach { configFile.appendText("$it\n") }
-		}
 		// Record in recent launches so FAB launches are replayable
 		AppPreferences.getInstance(getApplication()).addRecentLaunch(JSONObject().apply {
 			put("type", "quickstart")
@@ -349,6 +351,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 	private fun applyConstraints(s: EmulatorSettings): EmulatorSettings {
 		var result = s
 
+		if (result.baseModel == AmigaModel.CD32 || result.baseModel == AmigaModel.CDTV) {
+			result = result.copy(useRtg = false, z3Ram = 0)
+		}
+
 		// 68000/68010 must use 24-bit addressing
 		if (result.cpuModel <= 68010) {
 			result = result.copy(address24Bit = true, z3Ram = 0, jitCacheSize = 0)
@@ -359,42 +365,28 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 			result = result.copy(cpuSpeed = "real", jitCacheSize = 0)
 		}
 
-		// JIT requires 68020+
 		if (result.jitCacheSize > 0) {
 			if (result.cpuModel < 68020) {
 				result = result.copy(jitCacheSize = 0, jitFpu = false)
 			} else {
-				// JIT forces fastest possible speed, disables cycle-exact, and enables JIT FPU
-				result = result.copy(cpuSpeed = "max", cycleExact = false, jitFpu = true)
+				// JIT forces fastest possible speed and disables cycle-exact
+				result = result.copy(cpuSpeed = "max", cycleExact = false, address24Bit = false)
 			}
-		} else {
-			result = result.copy(jitFpu = false)
 		}
 
-		// Z3 RAM requires 32-bit addressing
-		if (result.address24Bit && result.z3Ram > 0) {
-			result = result.copy(z3Ram = 0)
+		// RTG or Z3 RAM requires 32-bit addressing
+		if (result.useRtg || result.z3Ram > 0) {
+			result = result.copy(address24Bit = false)
 		}
 
-		if (result.address24Bit || result.cpuModel < 68020) {
-			result = result.copy(useRtg = false)
-		}
-
-		// 24-bit addressing disables JIT
+		// 24-bit addressing disables JIT and RTG
 		if (result.address24Bit) {
-			result = result.copy(jitCacheSize = 0)
+			result = result.copy(jitCacheSize = 0, useRtg = false)
 		}
 
 		// FPU: only internal for 68040/68060
 		if (result.fpuModel == 68040 && result.cpuModel < 68040) {
 			result = result.copy(fpuModel = 0)
-		}
-
-		if (result.onScreenJoystick || result.joyport1 == "onscreen_joy") {
-			result = result.copy(
-				onScreenJoystick = false,
-				joyport1 = if (result.joyport1 == "onscreen_joy") "joy1" else result.joyport1
-			)
 		}
 
 		return result

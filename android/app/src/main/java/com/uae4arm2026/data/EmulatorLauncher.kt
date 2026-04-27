@@ -11,6 +11,18 @@ import org.json.JSONObject
 import java.io.File
 
 object EmulatorLauncher {
+	private fun normalizeCdImageValue(value: String): String {
+		var normalized = value.trim()
+		while (normalized.endsWith(",image", ignoreCase = true)) {
+			normalized = normalized.dropLast(6)
+		}
+		return normalized.takeIf(::isSupportedCdImagePath).orEmpty()
+	}
+
+	private fun isSupportedCdImagePath(path: String): Boolean {
+		val extension = path.substringAfterLast('.', "").lowercase()
+		return extension in FileCategory.CD_IMAGES.extensions
+	}
 
 	/**
 	 * Launch emulation with a Quick Start model and optional media.
@@ -27,22 +39,32 @@ object EmulatorLauncher {
 		romExtFile: String? = null
 	) {
 		val args = mutableListOf("--rescan-roms", "--model", model.cmdArg)
+		val launchFloppy0 = floppyPath?.let { MediaPathHelper.normalizeLaunchPath(context, it) }
+		val launchFloppy1 = floppy1Path?.let { MediaPathHelper.normalizeLaunchPath(context, it) }
+		val launchCd = cdPath?.let { MediaPathHelper.normalizeLaunchPath(context, it) }
+		val normalizedLaunchCd = launchCd?.let(::normalizeCdImageValue).orEmpty()
+		val launchHardDrive = hardDrivePath?.let { MediaPathHelper.normalizeLaunchPath(context, it) }
+		val launchExtRom = romExtFile?.let { MediaPathHelper.normalizeLaunchPath(context, it) }
 
-		if (floppyPath != null && model.hasFloppy) {
-			args.addAll(listOf("-0", floppyPath))
+		if (launchFloppy0 != null && model.hasFloppy) {
+			args.addAll(listOf("-0", launchFloppy0))
 		}
-		if (floppy1Path != null && model.hasFloppy) {
-			args.addAll(listOf("-1", floppy1Path))
+		if (launchFloppy1 != null && model.hasFloppy) {
+			args.addAll(listOf("-1", launchFloppy1))
 		}
-		if (cdPath != null && model.hasCd) {
-			args.addAll(listOf("-s", "cdimage0=$cdPath"))
+		if (normalizedLaunchCd.isNotEmpty() && model.hasCd) {
+			args.addAll(listOf("-s", "cdimage0=$normalizedLaunchCd,image"))
 		}
-		if (!romExtFile.isNullOrBlank() && model.hasCd) {
-			args.addAll(listOf("-s", "kickstart_ext_rom_file=$romExtFile"))
+		if (!launchExtRom.isNullOrBlank() && model.hasCd) {
+			args.addAll(listOf("-s", "kickstart_ext_rom_file=$launchExtRom"))
 		}
-		if (hardDrivePath != null) {
-			// Mount as DH0 using new-style hardfile syntax: rw,DEV:PATH,sectors,surfaces,reserved,blocksize,bootpri
-			args.addAll(listOf("-s", "hardfile2=rw,DH0:\"$hardDrivePath\",32,1,2,512,0"))
+		if (launchHardDrive != null) {
+			if (MediaPathHelper.isDirectoryPath(context, launchHardDrive)) {
+				val name = File(launchHardDrive).name.ifBlank { "DH0" }
+				args.addAll(listOf("-s", "filesystem2=rw,DH0:$name:\"$launchHardDrive\",0"))
+			} else {
+				args.addAll(listOf("-s", "hardfile2=rw,DH0:\"$launchHardDrive\",32,1,2,512,0"))
+			}
 		}
 		if (useRtg) {
 			args.addAll(listOf("-s", "gfxcard_type=ZorroIII"))
@@ -84,20 +106,22 @@ object EmulatorLauncher {
 	 * The emulator auto-configures based on its XML database match.
 	 */
 	fun launchWhdload(context: Context, lhaPath: String) {
-		val args = arrayOf("--rescan-roms", "--autoload", lhaPath, "-G")
+		val launchPath = MediaPathHelper.normalizeLaunchPath(context, lhaPath)
+		val args = arrayOf("--rescan-roms", "--autoload", launchPath, "-G")
 		AppPreferences.getInstance(context).addRecentLaunch(JSONObject().apply {
 			put("type", "whdload")
-			put("path", lhaPath)
+			put("path", launchPath)
 		})
 		launchSdlActivity(context, args)
 	}
 
 	fun launchWhdload(context: Context, lhaPath: String, settings: EmulatorSettings) {
+		val launchPath = MediaPathHelper.normalizeLaunchPath(context, lhaPath)
 		val configFile = ConfigGenerator.writeConfig(context, settings, ".current_settings.uae")
-		val args = arrayOf("--rescan-roms", "--config", configFile.absolutePath, "--autoload", lhaPath, "-G")
+		val args = arrayOf("--rescan-roms", "--config", configFile.absolutePath, "--autoload", launchPath, "-G")
 		AppPreferences.getInstance(context).addRecentLaunch(JSONObject().apply {
 			put("type", "whdload")
-			put("path", lhaPath)
+			put("path", launchPath)
 		})
 		launchSdlActivity(context, args)
 	}

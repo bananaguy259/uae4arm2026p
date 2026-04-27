@@ -158,6 +158,7 @@ fun SettingsScreen(
 		Triple(1920, 1080, stringResource(R.string.settings_display_resolution_1920_1080))
 	)
 	val portOptions = listOf(
+		"none" to stringResource(R.string.settings_input_device_none),
 		"joy0" to stringResource(R.string.settings_input_device_joystick_0),
 		"joy1" to stringResource(R.string.settings_input_device_joystick_1),
 		"mouse" to stringResource(R.string.settings_input_device_mouse),

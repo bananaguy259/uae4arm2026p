@@ -25,7 +25,7 @@ enum class FileCategory(
 	ROMS("roms", "Kickstarts / ROMs", setOf("rom", "bin", "kick", "zip")),
 	FLOPPIES("floppies", "Floppy Images", setOf("adf", "adz", "dms", "ipf", "zip", "gz")),
 	HARD_DRIVES("harddrives", "Hard Drives", setOf("hdf", "hdi", "vhd")),
-	CD_IMAGES("cd-images", "CD / ISO Images", setOf("iso", "cue", "chd", "nrg", "mds")),
+	CD_IMAGES("cd-images", "CD / ISO Images", setOf("iso", "chd")),
 	WHDLOAD_GAMES("lha", "WHDLoad Games", setOf("lha", "lzx", "lzh"));
 
 	companion object {

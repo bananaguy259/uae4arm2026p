@@ -1594,7 +1594,11 @@ static int parsechd (struct cdunit *cdu, struct zfile *zcue, const TCHAR *img, c
 	chd_file *cf = new chd_file();
 	auto err = cf->open(f->name, false, NULL);
 	if (err != std::error_condition()) {
-		write_log (_T("CHD '%s' err=%d\n"), zfile_getname (zcue), err);
+		write_log (_T("CHD '%s' open failed: value=%d category=%s message=%s\n"),
+			zfile_getname(zcue),
+			err.value(),
+			err.category().name(),
+			err.message().c_str());
 		zfile_fclose (f);
 		return 0;
 	}

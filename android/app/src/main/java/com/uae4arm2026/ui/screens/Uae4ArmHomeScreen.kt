@@ -868,6 +868,23 @@ fun Uae4ArmHomeScreen(
 // Kickstart status row
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Get a user-friendly display name for a path or URI.
+ */
+private fun getPathDisplayName(path: String): String {
+	if (path.isBlank()) return ""
+	if (path.startsWith("content://")) {
+		return try {
+			val uri = Uri.parse(path)
+			val decoded = Uri.decode(uri.lastPathSegment ?: "")
+			decoded.substringAfterLast('/')
+		} catch (_: Exception) {
+			path.substringAfterLast('/')
+		}
+	}
+	return path.substringAfterLast('/')
+}
+
 @Composable
 private fun KickstartRow(
 	settings: EmulatorSettings,
@@ -900,7 +917,7 @@ private fun KickstartRow(
 				) {
 					Text(
 						text  = if (settings.romFile.isNotBlank())
-							"KS: " + android.net.Uri.decode(settings.romFile.substringAfterLast('/'))
+							"KS: " + getPathDisplayName(settings.romFile)
 						else
 							"Kickstart: (not selected)",
 						color    = if (settings.romFile.isNotBlank()) TextPrimary else TextOrange,
@@ -919,7 +936,7 @@ private fun KickstartRow(
 				) {
 					Text(
 						text  = if (settings.romExtFile.isNotBlank())
-							"EXT: " + android.net.Uri.decode(settings.romExtFile.substringAfterLast('/'))
+							"EXT: " + getPathDisplayName(settings.romExtFile)
 						else
 							"Ext ROM: (not selected)",
 						color    = if (settings.romExtFile.isNotBlank()) TextPrimary else TextOrange,
@@ -1177,7 +1194,7 @@ private fun DriveIconCard(
 	onPickFile: () -> Unit,
 	modifier: Modifier = Modifier
 ) {
-	val fileName = currentPath.substringAfterLast('/').ifBlank { "" }
+	val fileName = getPathDisplayName(currentPath)
 	val hasFile  = currentPath.isNotBlank()
 	val isDir = hasFile && !currentPath.startsWith("content://") && try { java.io.File(currentPath).isDirectory } catch(_: Exception) { false }
 

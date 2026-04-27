@@ -194,6 +194,7 @@
     <string name="settings_input_on_screen_joystick">On-Screen Joystick</string>
     <string name="settings_input_on_screen_keyboard_button">On-Screen Keyboard Button</string>
     <string name="settings_input_device_mouse">Mouse</string>
+    <string name="settings_input_device_none">None</string>
     <string name="settings_input_device_joystick_0">Joystick 0</string>
     <string name="settings_input_device_joystick_1">Joystick 1</string>
     <string name="settings_input_device_on_screen_joystick">On-Screen Joystick</string>

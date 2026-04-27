@@ -65,6 +65,23 @@
 
 namespace {
 
+#if defined(__ANDROID__)
+	int android_dup_bridged_fd(std::string const &path) noexcept
+	{
+		auto const marker = path.find("/cache/fd_");
+		if (marker == std::string::npos)
+			return -1;
+
+		char *endptr = nullptr;
+		char const *fd_text = path.c_str() + marker + 10;
+		long const bridged_fd = std::strtol(fd_text, &endptr, 10);
+		if ((endptr == fd_text) || (*endptr != '/') || (bridged_fd < 0) || (bridged_fd > INT_MAX))
+			return -1;
+
+		return ::dup(int(bridged_fd));
+	}
+#endif
+
 	//============================================================
 	//  CONSTANTS
 	//============================================================
@@ -262,11 +279,17 @@ std::error_condition osd_file::open(std::string const& path, std::uint32_t openf
 
 	// attempt to open the file
 	int fd = -1;
-#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__HAIKU__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__bsdi__) || defined(__DragonFly__) || defined(__HAIKU__) || defined(_WIN32) || defined(SDLMAME_NO64BITIO) || defined(__ANDROID__)
-	fd = ::open(dst.c_str(), access, 0666);
-#else
-	fd = ::open64(dst.c_str(), access, 0666);
+#if defined(__ANDROID__)
+	fd = android_dup_bridged_fd(dst);
 #endif
+	if (fd < 0)
+	{
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__HAIKU__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__bsdi__) || defined(__DragonFly__) || defined(__HAIKU__) || defined(_WIN32) || defined(SDLMAME_NO64BITIO) || defined(__ANDROID__)
+		fd = ::open(dst.c_str(), access, 0666);
+#else
+		fd = ::open64(dst.c_str(), access, 0666);
+#endif
+	}
 
 	if (fd < 0)
 	{
@@ -285,10 +308,26 @@ std::error_condition osd_file::open(std::string const& path, std::uint32_t openf
 				// attempt to reopen the file
 				if (!createrr)
 				{
+#if defined(__ANDROID__)
+					fd = android_dup_bridged_fd(dst);
+					if (fd >= 0)
+					{
+						// nothing else to do here
+					}
+					else
+					{
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__HAIKU__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__bsdi__) || defined(__DragonFly__) || defined(__HAIKU__) || defined(_WIN32) || defined(SDLMAME_NO64BITIO) || defined(__ANDROID__)
+						fd = ::open(dst.c_str(), access, 0666);
+#else
+						fd = ::open64(dst.c_str(), access, 0666);
+#endif
+					}
+#else
 #if defined(__APPLE__) || defined(__FreeBSD__) || defined(__HAIKU__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__bsdi__) || defined(__DragonFly__) || defined(__HAIKU__) || defined(_WIN32) || defined(SDLMAME_NO64BITIO) || defined(__ANDROID__)
 					fd = ::open(dst.c_str(), access, 0666);
 #else
 					fd = ::open64(dst.c_str(), access, 0666);
+#endif
 #endif
 				}
 				if (fd < 0)

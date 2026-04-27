@@ -644,6 +644,7 @@ int hdf_open (struct hardfiledata *hfd, const TCHAR *pname)
 		pname = hfd->ci.rootdir;
 	cfgfile_resolve_path_out_load(pname, filepath, MAX_DPATH, PATH_HDF);
 #ifdef WITH_CHD
+#if 0 // CHD support is now only for CD32
 	TCHAR nametmp[MAX_DPATH];
 	_tcscpy (nametmp, filepath);
 	TCHAR *ext = _tcsrchr (nametmp, '.');
@@ -688,6 +689,7 @@ int hdf_open (struct hardfiledata *hfd, const TCHAR *pname)
 			return 1;
 		}
 	}
+#endif
 #endif
 	ret = hdf_open_target (hfd, filepath);
 	if (ret <= 0)

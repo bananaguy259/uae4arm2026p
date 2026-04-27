@@ -3843,6 +3843,12 @@ static void clear_base_content_path_preserving_overrides()
 // convert path to absolute
 void fullpath(TCHAR* path, int size, bool userelative)
 {
+	if (path[0] != 0) {
+		if (_tcsncmp(path, _T("/proc/self/fd/"), 14) == 0 || _tcsstr(path, _T("/cache/fd_")) != nullptr) {
+			return;
+		}
+	}
+
 	// Resolve absolute path
 	TCHAR tmp1[MAX_DPATH];
 	tmp1[0] = 0;

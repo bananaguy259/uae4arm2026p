@@ -3,6 +3,7 @@ package com.uae4arm2026.data
 import android.util.Log
 import com.uae4arm2026.data.model.AmigaModel
 import com.uae4arm2026.data.model.EmulatorSettings
+import com.uae4arm2026.data.model.FileCategory
 import java.io.File
 import java.io.IOException
 
@@ -11,6 +12,8 @@ import java.io.IOException
  * Preserves unknown keys so configs created by ImGui don't lose settings on round-trip.
  */
 object ConfigParser {
+	private val uaehfFileKeyRegex = Regex("""uaehf(\d+)_file""")
+	private val uaehfKeyRegex = Regex("""uaehf\d+(?:_(?:file|name|bootpri|present|blocksize|readonly))?""")
 
 	data class ParsedConfig(
 		val settings: EmulatorSettings,
@@ -27,7 +30,7 @@ object ConfigParser {
 		"kickstart_rom_file", "kickstart_ext_rom_file",
 		"floppy0", "floppy0type", "floppy1", "floppy1type",
 		"floppy2", "floppy2type", "floppy3", "floppy3type",
-		"cdimage0", "hardfile2",
+		"cdimage0", "hardfile2", "filesystem2",
 		"sound_output", "sound_frequency", "sound_channels", "sound_stereo_separation", "sound_interpol",
 		"gfx_width", "gfx_height", "gfx_correct_aspect", "gfx_auto_crop", "rtgmem_type", "rtgmem_size", "gfxcard_type", "gfxcard_size", "gfxcard_options", "gfx_fullscreen_amiga", "gfx_fullscreen_picasso", "rtg_nocustom", "rtg_noautomodes", "show_leds",
 		"joyport0", "joyport1",
@@ -48,7 +51,7 @@ object ConfigParser {
 				false
 			} else {
 				val key = trimmed.substringBefore('=').trim()
-				key in knownKeys
+				key in knownKeys || uaehfKeyRegex.matches(key)
 			}
 		}
 	}
@@ -102,8 +105,8 @@ object ConfigParser {
 			val key = trimmed.substring(0, eqIndex).trim()
 			val value = trimmed.substring(eqIndex + 1).trim()
 
-			if (key in knownKeys) {
-				if (key == "hardfile2") {
+			if (key in knownKeys || uaehfKeyRegex.matches(key)) {
+				if (key == "hardfile2" || key == "filesystem2") {
 					hardfileLines += value
 				} else {
 					kvPairs[key] = value
@@ -120,7 +123,7 @@ object ConfigParser {
 	}
 
 	private fun buildSettings(kv: Map<String, String>, hardfileLines: List<String>): EmulatorSettings {
-		val hardDriveList = parseAllHardfilePaths(hardfileLines)
+		val hardDriveList = parseAllHardfilePaths(kv, hardfileLines)
 		val onScreenJoystick = kv[UpstreamConfig.KEY_AMIBERRY_ONSCREEN_JOYSTICK].toBool(false)
 			|| kv[UpstreamConfig.KEY_ONSCREEN_JOYSTICK].toBool(false)
 		val onScreenKeyboard = when {
@@ -141,7 +144,7 @@ object ConfigParser {
 		val joyport1 = when {
 			androidJoyport1 == "onscreen_joy" -> "onscreen_joy"
 			onScreenJoystick -> "onscreen_joy"
-			else -> kv["joyport1"] ?: "joy1"
+			else -> kv["joyport1"] ?: "none"
 		}
 		return EmulatorSettings(
 			baseModel = guessModel(kv),
@@ -176,7 +179,7 @@ object ConfigParser {
 			floppy3 = kv["floppy3"] ?: "",
 			floppy3Type = kv["floppy3type"]?.toIntOrNull() ?: -1,
 
-			cdImage = kv["cdimage0"] ?: "",
+			cdImage = normalizeCdImagePath(kv["cdimage0"]),
 			hardDrives = hardDriveList,
 
 			soundOutput = kv["sound_output"] ?: "exact",
@@ -202,10 +205,20 @@ object ConfigParser {
 		)
 	}
 
-	private fun parseAllHardfilePaths(lines: List<String>): List<String> {
+	private fun parseAllHardfilePaths(kv: Map<String, String>, lines: List<String>): List<String> {
 		val result = mutableListOf<String>()
 		for (i in 0 until 10) {
 			result.add(parseHardfilePath(lines, "DH$i"))
+		}
+		kv.forEach { (key, value) ->
+			val match = uaehfFileKeyRegex.matchEntire(key) ?: return@forEach
+			val physicalUnit = match.groupValues[1].toIntOrNull() ?: return@forEach
+			val logicalName = kv["uaehf${physicalUnit}_name"] ?: "DH$physicalUnit"
+			val logicalUnit = logicalName.removePrefix("DH").toIntOrNull() ?: physicalUnit
+			while (logicalUnit >= result.size) {
+				result.add("")
+			}
+			result[logicalUnit] = value
 		}
 		// Trim trailing empty entries but keep at least one (DH0)
 		while (result.size > 1 && result.last().isEmpty()) result.removeAt(result.size - 1)
@@ -224,6 +237,15 @@ object ConfigParser {
 		}
 		val afterDevice = line.substringAfter(prefix, "")
 		return afterDevice.substringBefore(',').trim()
+	}
+
+	private fun normalizeCdImagePath(value: String?): String {
+		var normalized = value?.trim().orEmpty()
+		while (normalized.endsWith(",image", ignoreCase = true)) {
+			normalized = normalized.dropLast(6)
+		}
+		val extension = normalized.substringAfterLast('.', "").lowercase()
+		return normalized.takeIf { extension in FileCategory.CD_IMAGES.extensions }.orEmpty()
 	}
 
 	/**

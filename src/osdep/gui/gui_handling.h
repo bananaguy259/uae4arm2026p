@@ -277,7 +277,7 @@ static const char* diskfile_filter[] = {
 	".adf", ".adz", ".fdi", ".ipf", ".zip", ".dms", ".gz", ".xz", ".scp",
 	".7z", ".lha", ".lzh", ".lzx", "\0"
 };
-static const char* harddisk_filter[] = {".hdf", ".hdz", ".lha", ".zip", ".vhd", ".chd", ".7z", "\0"};
+static const char* harddisk_filter[] = {".hdf", ".hdz", ".lha", ".zip", ".vhd", ".7z", "\0"};
 static const char* archive_filter[] = { ".zip", ".7z", ".rar", ".lha", ".lzh", ".lzx", "\0" };
 static const char* cdfile_filter[] = { ".cue", ".ccd", ".iso", ".mds", ".nrg", ".chd", "\0" };
 static const char* whdload_filter[] = { ".lha", "\0" };

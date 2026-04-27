@@ -250,6 +250,17 @@ class ConfigParserTest {
 	}
 
 	@Test
+	fun `parse input defaults joyport1 to none when absent`() {
+		val file = writeConfig("""
+			joyport0=mouse
+			onscreen_joystick=false
+		""".trimIndent())
+		val result = ConfigParser.parse(file)
+
+		assertEquals("none", result.settings.joyport1)
+	}
+
+	@Test
 	fun `parse input falls back to vkbd_enabled when default osk key is absent`() {
 		val file = writeConfig("""
 			vkbd_enabled=false

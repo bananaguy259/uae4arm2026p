@@ -90,14 +90,20 @@ private fun treeUriToPath(uri: Uri): String? = try {
 } catch (_: Exception) { null }
 
 /**
- * Resolve a library-scanned file path to a real filesystem path the emulator can open.
- * Scanned SAF files have content:// URIs; this converts them to /storage/… paths.
- * Falls back to the original path string if resolution is not possible (e.g. already a
- * real path, or the URI is from a cloud provider without a local backing file).
+ * Get a user-friendly display name for a saved path.
+ * If it's a content URI, try to extract the filename from the end or just the last segment.
  */
-private fun resolveLibraryFilePath(context: Context, path: String): String {
-	if (!path.startsWith("content://")) return path
-	return FileManager.resolveToFilePath(context, Uri.parse(path)) ?: path
+private fun getPathDisplayName(path: String, files: List<AmigaFile>): String {
+	if (path.isEmpty()) return "-"
+	// Check if we have this file in our scanned list for a better name
+	files.firstOrNull { it.path == path }?.let { return it.name }
+	
+	if (path.startsWith("content://")) {
+		val uri = Uri.parse(path)
+		val decoded = Uri.decode(uri.lastPathSegment ?: "")
+		return decoded.substringAfterLast('/')
+	}
+	return path.substringAfterLast('/')
 }
 
 // ── StorageTab ────────────────────────────────────────────────────────────────
@@ -360,7 +366,7 @@ private fun FileDropdown(
 	val scope = rememberCoroutineScope()
 	val noneLabel = stringResource(R.string.placeholder_none)
 	val selectedName = if (selectedPath.isEmpty()) noneLabel
-	else selectedPath.substringAfterLast('/')
+	else getPathDisplayName(selectedPath, files)
 
 	// SAF file picker — resolves to a real path; falls back to copy for cloud providers.
 	var pendingImportCallback by remember { mutableStateOf<((String) -> Unit)?>(null) }
@@ -414,9 +420,9 @@ private fun FileDropdown(
 					DropdownMenuItem(
 						text = { Text(file.name) },
 						onClick = {
-							// Resolve content:// URI to a real path so native code can open it.
-							val path = resolveLibraryFilePath(context, file.path)
-							onSelect(path)
+							// Use the path directly (may be a content:// URI). 
+							// The activity will handle translating URIs to File Descriptors.
+							onSelect(file.path)
 							expanded = false
 						}
 					)
@@ -504,7 +510,7 @@ private fun CompactFloppyDrive(
 		1 -> "HD"
 		else -> "Off"
 	}
-	val selectedName = if (selectedPath.isEmpty()) noneLabel else selectedPath.substringAfterLast('/')
+	val selectedName = if (selectedPath.isEmpty()) noneLabel else getPathDisplayName(selectedPath, files)
 	val displayText = if (driveType < 0) label else "$label $selectedName"
 
 	// SAF file picker — resolves to a real path; falls back to copy for cloud providers.
@@ -554,9 +560,8 @@ private fun CompactFloppyDrive(
 				DropdownMenuItem(
 					text = { Text(file.name, style = MaterialTheme.typography.bodySmall) },
 					onClick = {
-						// Resolve content:// URI to a real path so native code can open it.
-						val path = resolveLibraryFilePath(context, file.path)
-						onChange(path, driveType)
+						// Use the path directly (may be a content:// URI).
+						onChange(file.path, driveType)
 						expanded = false
 					}
 				)

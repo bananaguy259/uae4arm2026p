@@ -3,6 +3,7 @@ package com.uae4arm2026.data
 import android.content.Context
 import com.uae4arm2026.data.model.AmigaModel
 import com.uae4arm2026.data.model.EmulatorSettings
+import com.uae4arm2026.data.model.FileCategory
 import java.io.File
 
 /**
@@ -12,7 +13,12 @@ import java.io.File
 object ConfigGenerator {
 
 	fun generate(settings: EmulatorSettings): String {
+		return generate(settings) { path -> !path.startsWith("content://") && File(path).isDirectory }
+	}
+
+	private fun generate(settings: EmulatorSettings, isDirectoryPath: (String) -> Boolean): String {
 		val sb = StringBuilder()
+		val normalizedCdImage = normalizeCdImageValue(settings.cdImage)
 		val onScreenJoystick = settings.onScreenJoystick || settings.joyport1 == "onscreen_joy"
 		val onScreenKeyboard = settings.onScreenKeyboard
 		val androidJoyport1 = settings.joyport1
@@ -42,12 +48,12 @@ object ConfigGenerator {
 		// Platform-specific chipset extensions
 		if (settings.baseModel == AmigaModel.CD32) {
 			sb.appendLine("chipset_compatible=CD32")
-			sb.appendLine("cs_cd32cd=true")
-			sb.appendLine("cs_cd32c2p=true")
-			sb.appendLine("cs_cd32nvram=true")
+			sb.appendLine("cd32cd=true")
+			sb.appendLine("cd32c2p=true")
+			sb.appendLine("cd32nvram=true")
 		} else if (settings.baseModel == AmigaModel.CDTV) {
 			sb.appendLine("chipset_compatible=CDTV")
-			sb.appendLine("cs_cdtv=true")
+			sb.appendLine("cdtv=true")
 		}
 
 		// Memory
@@ -60,6 +66,7 @@ object ConfigGenerator {
 
 		// RTG
 		if (settings.useRtg) {
+			// For CD32/A1200, Zorro III requires 32-bit addressing (handled in constraints)
 			sb.appendLine("gfxcard_type=ZorroIII")
 			sb.appendLine("gfxcard_size=16") // Use 16MB VRAM for RTG
 			sb.appendLine("rtg_nocustom=true")
@@ -67,6 +74,7 @@ object ConfigGenerator {
 			sb.appendLine("gfx_fullscreen_picasso=fullwindow")
 		} else {
 			sb.appendLine("gfxcard_size=0")
+			sb.appendLine("rtg_nocustom=false")
 		}
 
 		// Kickstart ROM
@@ -78,19 +86,31 @@ object ConfigGenerator {
 		}
 
 		// Floppy drives
-		sb.appendLine("floppy0=${settings.floppy0}")
+		if (settings.floppy0.isNotEmpty()) sb.appendLine("floppy0=${settings.floppy0}")
 		sb.appendLine("floppy0type=${settings.floppy0Type}")
-		sb.appendLine("floppy1=${settings.floppy1}")
+		if (settings.floppy1.isNotEmpty()) sb.appendLine("floppy1=${settings.floppy1}")
 		sb.appendLine("floppy1type=${settings.floppy1Type}")
-		sb.appendLine("floppy2=${settings.floppy2}")
+		if (settings.floppy2.isNotEmpty()) sb.appendLine("floppy2=${settings.floppy2}")
 		sb.appendLine("floppy2type=${settings.floppy2Type}")
-		sb.appendLine("floppy3=${settings.floppy3}")
+		if (settings.floppy3.isNotEmpty()) sb.appendLine("floppy3=${settings.floppy3}")
 		sb.appendLine("floppy3type=${settings.floppy3Type}")
-		sb.appendLine("nr_floppies=${if (settings.floppy3Type != -1) 4 else if (settings.floppy2Type != -1) 3 else if (settings.floppy1Type != -1) 2 else 1}")
+		val numFloppies = if (settings.floppy3Type != -1) 4 
+						  else if (settings.floppy2Type != -1) 3 
+						  else if (settings.floppy1Type != -1) 2 
+						  else if (settings.floppy0Type != -1) 1 
+						  else 0
+		sb.appendLine("nr_floppies=$numFloppies")
 
 		// CD
-		if (settings.cdImage.isNotEmpty()) {
-			sb.appendLine("cdimage0=${settings.cdImage}")
+		if (normalizedCdImage.isNotEmpty()) {
+			// Suffix ',image' is required by Amiberry core for direct image mounting.
+			// Use unit 0 and ensure the core knows it's an image.
+			sb.appendLine("cdimage0=$normalizedCdImage,image")
+			sb.appendLine("cdimage0_present=true")
+			sb.appendLine("cdimage0_readonly=true")
+		} else if (settings.baseModel == AmigaModel.CD32 || settings.baseModel == AmigaModel.CDTV) {
+			// Required for CD console models even if no image is present to avoid BIOS loop
+			sb.appendLine("cdimage0_present=false")
 		}
 
 		// Hard drives
@@ -98,17 +118,19 @@ object ConfigGenerator {
 		var bootPriSet = false
 		settings.hardDrives.forEachIndexed { i, path ->
 			if (path.isNotEmpty()) {
-				val file = File(path)
-				val isDir = file.isDirectory
+				val isDir = isDirectoryPath(path)
+				val name = File(path).name.ifBlank { "DH$i" }
+				
 				// Only first non-empty drive is bootable (priority 0)
 				val bootPri = if (!bootPriSet) 0 else -128
 				bootPriSet = true
 
 				if (isDir) {
 					// Directory drive — use the robust filesystem2 format
-					sb.appendLine("filesystem2=rw,DH$i:${file.name.ifBlank { "DH$i" }}:\"$path\",$bootPri")
+					sb.appendLine("filesystem2=rw,DH$i:$name:\"$path\",$bootPri")
 				} else {
 					// HDF drive — use the robust uaehfX format that supports geometry auto-detect
+					// Use raw path in config; Uae4ArmEmulatorActivity will bridge it if it's a URI.
 					sb.appendLine("uaehf$physicalUnit=hdf,rw,DH$i:\"$path\",0,0,0,512,$bootPri")
 					sb.appendLine("uaehf${physicalUnit}_file=$path")
 					sb.appendLine("uaehf${physicalUnit}_name=DH$i")
@@ -166,7 +188,17 @@ object ConfigGenerator {
 		val confDir = File(context.getExternalFilesDir(null), "conf")
 		if (!confDir.exists()) confDir.mkdirs()
 		val file = File(confDir, filename)
-		file.writeText(generate(settings))
+		val normalizedSettings = settings.copy(
+			romFile = MediaPathHelper.normalizeLaunchPath(context, settings.romFile),
+			romExtFile = MediaPathHelper.normalizeLaunchPath(context, settings.romExtFile),
+			floppy0 = MediaPathHelper.normalizeLaunchPath(context, settings.floppy0),
+			floppy1 = MediaPathHelper.normalizeLaunchPath(context, settings.floppy1),
+			floppy2 = MediaPathHelper.normalizeLaunchPath(context, settings.floppy2),
+			floppy3 = MediaPathHelper.normalizeLaunchPath(context, settings.floppy3),
+			cdImage = MediaPathHelper.normalizeLaunchPath(context, settings.cdImage),
+			hardDrives = settings.hardDrives.map { MediaPathHelper.normalizeLaunchPath(context, it) }
+		)
+		file.writeText(generate(normalizedSettings) { path -> MediaPathHelper.isDirectoryPath(context, path) })
 		return file
 	}
 
@@ -185,4 +217,17 @@ object ConfigGenerator {
 	}
 
 	private fun Boolean.toCfg(): String = if (this) "true" else "false"
+
+	private fun normalizeCdImageValue(value: String): String {
+		var normalized = value.trim()
+		while (normalized.endsWith(",image", ignoreCase = true)) {
+			normalized = normalized.dropLast(6)
+		}
+		return normalized.takeIf(::isSupportedCdImagePath).orEmpty()
+	}
+
+	private fun isSupportedCdImagePath(path: String): Boolean {
+		val extension = path.substringAfterLast('.', "").lowercase()
+		return extension in FileCategory.CD_IMAGES.extensions
+	}
 }

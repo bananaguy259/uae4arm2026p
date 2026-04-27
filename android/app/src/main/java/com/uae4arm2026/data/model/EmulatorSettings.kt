@@ -68,7 +68,7 @@ data class EmulatorSettings(
 
 	// Input
 	val joyport0: String = "mouse",
-	val joyport1: String = "joy1",
+	val joyport1: String = "none",
 	val onScreenJoystick: Boolean = false,
 	val onScreenCd32Pad: Boolean = false,
 	val onScreenKeyboard: Boolean = true
@@ -99,7 +99,8 @@ data class EmulatorSettings(
 				)
 				AmigaModel.A1200 -> EmulatorSettings(
 					baseModel = model, cpuModel = 68020, chipset = "aga",
-					chipRam = 4, slowRam = 0, fastRam = 0, cpuSpeed = "real", cycleExact = true
+					chipRam = 4, slowRam = 0, fastRam = 0, address24Bit = false,
+					cpuSpeed = "max", cycleExact = false
 				)
 				AmigaModel.A3000 -> EmulatorSettings(
 					baseModel = model, cpuModel = 68030, chipset = "ecs",
@@ -112,8 +113,8 @@ data class EmulatorSettings(
 				)
 				AmigaModel.CD32 -> EmulatorSettings(
 					baseModel = model, cpuModel = 68020, chipset = "aga",
-					chipRam = 4, slowRam = 0, fastRam = 0, cpuSpeed = "real", cycleExact = true,
-					floppy0Type = -1
+					chipRam = 4, slowRam = 0, fastRam = 4, address24Bit = false,
+					cpuSpeed = "max", cycleExact = false, floppy0Type = -1
 				)
 				AmigaModel.CDTV -> EmulatorSettings(
 					baseModel = model, cpuModel = 68000, chipset = "ocs",
